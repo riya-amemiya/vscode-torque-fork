@@ -46,8 +46,8 @@
             },
             {
               "match": "(([A-Za-z][0-9A-Za-z_]*):\\s*)?([A-Za-z][0-9A-Za-z_]*)",
-              "captures":{
-                "3": {"name": "support.type.torque"}
+              "captures": {
+                "3": { "name": "support.type.torque" }
               }
             }
           ]

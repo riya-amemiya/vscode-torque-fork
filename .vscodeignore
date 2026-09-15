@@ -1,8 +1,11 @@
 .gitignore
 .vscode
+.github
 node_modules/
 out/
 src/
 tsconfig.json
-tslint.json
+.oxlintrc.json
+.oxfmtrc.json
 rolldown.config.mjs
+bun.lock
