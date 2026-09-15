@@ -4,6 +4,11 @@ This extension adds language support for the V8 project internal language
 [V8 Torque](https://v8.dev/docs/torque).
 This is not an officially supported Google product.
 
+This repository is a fork of
+[v8/vscode-torque](https://github.com/v8/vscode-torque).
+Some changes have been made so the extension works with current
+development environments.
+
 ## Language server
 
 The language server is not built by default. To build the language server manually:
