@@ -25,3 +25,8 @@ setting.
 ## Installation instructions
 
 Open [Visual Studio Code](https://code.visualstudio.com/). Press `Ctrl+Shift+X` or `Cmd+Shift+X` to open the Extensions pane. Find and install the “V8 Torque Language Support” extension. Alternatively, install the extension from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=v8-torque.vscode-torque). Open any `.tq` file in VS Code. The extension is now activated!
+
+## License
+
+This project is licensed under the Apache License, Version 2.0.
+See the [LICENSE](LICENSE) file for the full text.
