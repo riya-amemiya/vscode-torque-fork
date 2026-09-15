@@ -11,9 +11,18 @@
                 "reveal": "never"
             },
             "isBackground": true,
-            "problemMatcher": [
-                "$ts-webpack"
-            ]
+            "problemMatcher": {
+                "owner": "rolldown",
+                "pattern": {
+                    "regexp": "^error:\\s*(.*)$",
+                    "message": 1
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": "Waiting for changes"
+                }
+            }
         }
     ]
 }
