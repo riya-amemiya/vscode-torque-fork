@@ -32,7 +32,7 @@ jobs:
           - name: Typecheck
             run: bun run typecheck
           - name: Compile
-            run: rolldown -c
+            run: bun run bundle
           - name: Test
             run: bun test src
       - name: Package
