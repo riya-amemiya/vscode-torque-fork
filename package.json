@@ -7,6 +7,10 @@
     "Programming Languages"
   ],
   "license": "Apache-2.0",
+  "author": {
+    "name": "Riya Amemiya",
+    "url": "https://github.com/riya-amemiya"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/riya-amemiya/vscode-torque-fork.git"

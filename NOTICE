@@ -1,0 +1,19 @@
+V8 Torque Language Support Fork
+Copyright 2026 Riya Amemiya
+
+This product includes software from vscode-torque
+(https://github.com/v8/vscode-torque):
+Copyright 2019 The VSCode V8 Torque Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This is an independent fork. It is not affiliated with, endorsed by,
+or supported by Google LLC or the V8 project.
+
+"V8" and related marks are trademarks of their respective owners.
+This project uses those names only to identify the Torque language
+and to describe the origin of the Work.
