@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/riya-amemiya/vscode-torque-fork/security/advisories/new
+    about: Do not open a public issue for security reports. Use private vulnerability reporting.
+  - name: Upstream V8 Torque extension
+    url: https://github.com/v8/vscode-torque
+    about: Issues that belong to the original Google-hosted v8/vscode-torque project.
+  - name: Torque language documentation
+    url: https://v8.dev/docs/torque
+    about: Questions about the Torque language itself, not this editor extension.

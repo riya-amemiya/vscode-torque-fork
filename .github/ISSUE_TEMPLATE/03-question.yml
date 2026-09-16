@@ -1,0 +1,35 @@
+name: Question
+description: Ask a question about using or contributing to this extension.
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for questions about **this editor extension**.
+
+        For the Torque language itself, see the [Torque user manual](https://v8.dev/docs/torque).
+        For security reports, see [SECURITY.md](https://github.com/riya-amemiya/vscode-torque-fork/blob/main/SECURITY.md).
+  - type: checkboxes
+    id: existing
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search [existing issues](https://github.com/riya-amemiya/vscode-torque-fork/issues) first.
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow the [Code of Conduct](https://github.com/riya-amemiya/vscode-torque-fork/blob/main/CODE_OF_CONDUCT.md).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
