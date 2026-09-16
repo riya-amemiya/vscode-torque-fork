@@ -11,9 +11,26 @@ supported by Google LLC or the V8 project.
 
 The Marketplace identifier is `riya-amemiya.vscode-torque-fork`.
 
-## Language server
+## Editor features
 
-The language server is not built by default. To build the language server manually:
+Opening a `.tq` file enables:
+
+- Go to definition for macros, builtins, types, classes, structs, fields, and locals
+- Inline completions and snippets for Torque keywords, annotations, and builtins such as `Cast` and `typeswitch`
+- Syntax error markers for unmatched delimiters, unterminated strings, and malformed declarations
+- Hover documentation and the document outline
+
+These features come from a built-in language service modeled on the public
+[Torque user manual](https://v8.dev/docs/torque) and V8's `src/torque` grammar.
+They work without compiling V8.
+
+## Optional native language server
+
+The native `torque-language-server` is optional. When the executable is present
+it is started for compiler-accurate diagnostics; when it is missing the
+built-in editor features still work.
+
+The language server is not built by default. To build it manually:
 
 ```
 cd <v8 checkout>

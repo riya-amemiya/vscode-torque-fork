@@ -28,6 +28,8 @@ jobs:
             run: bun run typecheck
           - name: Compile
             run: bun run compile
+          - name: Test
+            run: bun test src
       - name: Package
         run: bun run package
       - name: VSIX must not contain source maps

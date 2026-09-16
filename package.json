@@ -2,7 +2,7 @@
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
   "version": "1.1.0",
-  "description": "Syntax highlighting and language server for the V8 Torque programming language",
+  "description": "Syntax highlighting, go-to-definition, completions, and syntax diagnostics for V8 Torque",
   "categories": [
     "Programming Languages"
   ],
@@ -23,6 +23,7 @@
     "format:check": "oxfmt --check",
     "lint": "oxlint",
     "package": "vsce package --no-dependencies",
+    "test": "bun test src",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "rolldown -c --minify",
     "watch": "rolldown -c --watch"
@@ -96,6 +97,7 @@
     ]
   },
   "activationEvents": [
+    "onLanguage:torque",
     "workspaceContains:**/*.tq"
   ],
   "extensionKind": [
