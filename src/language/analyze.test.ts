@@ -179,6 +179,31 @@ macro Main(a: Smi): Smi {
     expect(symbol?.start).toBe(source.indexOf("Helper"));
   });
 
+  test("jumps to the parameter under the cursor when the name is reused", () => {
+    const source = `
+macro Helper(x: Smi): Smi { return x; }
+macro Main(x: Smi): Smi { return Helper(x); }
+`.trim();
+    const analysis = analyzeDocument(source);
+    const offset = source.indexOf("Main(x") + "Main(".length;
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.name).toBe("x");
+    expect(symbol?.start).toBe(offset);
+    expect(symbol?.containerName).toBe("Main");
+  });
+
+  test("jumps to the macro under the cursor when the name is overloaded", () => {
+    const source = `
+macro Helper(x: Smi): Smi { return x; }
+macro Helper(x: String): String { return x; }
+`.trim();
+    const analysis = analyzeDocument(source);
+    const offset = source.lastIndexOf("Helper");
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(offset);
+  });
+
   test("jumps from a parameter name immediately after '('", () => {
     const source = "macro Helper(x: Smi): Smi { return x; }";
     const analysis = analyzeDocument(source);

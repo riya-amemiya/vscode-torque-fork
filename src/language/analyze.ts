@@ -228,6 +228,12 @@ function resolveDefinitionByName(
       }
     }
   }
+  const covering = matches.filter(
+    (symbol) => analysis.symbols.includes(symbol) && offset >= symbol.start && offset <= symbol.end,
+  );
+  if (covering.length > 0) {
+    return [covering[covering.length - 1]];
+  }
   const local = matches.filter(
     (symbol) => analysis.symbols.includes(symbol) && symbol.end <= token.start,
   );
