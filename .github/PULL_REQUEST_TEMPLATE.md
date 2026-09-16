@@ -22,6 +22,7 @@ Describe how you verified the change.
 - [ ] `bun run typecheck`
 - [ ] `bun run compile`
 - [ ] `bun test src`
+- [ ] `bun run test:compiler`
 
 If this change affects editor behavior (go to definition, completions,
 diagnostics, hover, outline, or the optional native language server), describe

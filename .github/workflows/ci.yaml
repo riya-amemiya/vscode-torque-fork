@@ -15,10 +15,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@1.83.0
+        with:
+          targets: wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - run: cargo test -p torque-compiler
+      - run: bun run build:wasm
       - parallel:
           - name: Lint
             run: bun run lint
@@ -27,7 +32,7 @@ jobs:
           - name: Typecheck
             run: bun run typecheck
           - name: Compile
-            run: bun run compile
+            run: rolldown -c
           - name: Test
             run: bun test src
       - name: Package
@@ -36,5 +41,11 @@ jobs:
         run: |
           if unzip -Z1 ./*.vsix | grep -E '\.map$'; then
             echo "Source maps must not be packaged in the VSIX" >&2
+            exit 1
+          fi
+      - name: VSIX must contain the Torque WASM compiler
+        run: |
+          if ! unzip -Z1 ./*.vsix | grep -E 'torque_compiler\.wasm$'; then
+            echo "torque_compiler.wasm must be packaged in the VSIX" >&2
             exit 1
           fi

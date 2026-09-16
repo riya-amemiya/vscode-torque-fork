@@ -5,6 +5,12 @@
 node_modules/
 out/
 src/
+crates/
+scripts/
+target/
+Cargo.toml
+Cargo.lock
+rust-toolchain.toml
 tsconfig.json
 .oxlintrc.json
 .oxfmtrc.json

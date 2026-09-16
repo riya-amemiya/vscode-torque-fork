@@ -12,19 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { analyzeDocument, type DocumentAnalysis } from "./analyze";
+import { analyzeDocuments, type DocumentAnalysis } from "./analyze";
 
 export class TorqueWorkspace {
+  private readonly sources = new Map<string, string>();
   private readonly documents = new Map<string, DocumentAnalysis>();
 
   set(uri: string, text: string): DocumentAnalysis {
-    const analysis = analyzeDocument(text);
-    this.documents.set(uri, analysis);
+    this.sources.set(uri, text);
+    this.rebuild();
+    const analysis = this.documents.get(uri);
+    if (analysis === undefined) {
+      throw new Error(`Torque compiler did not return analysis for ${uri}`);
+    }
     return analysis;
   }
 
+  load(uri: string, text: string): void {
+    this.sources.set(uri, text);
+  }
+
+  rebuild(): void {
+    const files = [...this.sources.entries()].map(([uri, text]) => ({ uri, text }));
+    const compiled = analyzeDocuments(files);
+    this.documents.clear();
+    for (const [uri, analysis] of compiled) {
+      this.documents.set(uri, analysis);
+    }
+  }
+
   delete(uri: string): void {
-    this.documents.delete(uri);
+    this.sources.delete(uri);
+    this.rebuild();
   }
 
   get(uri: string): DocumentAnalysis | undefined {
@@ -32,12 +51,7 @@ export class TorqueWorkspace {
   }
 
   uriFor(analysis: DocumentAnalysis): string | undefined {
-    for (const [uri, document] of this.documents) {
-      if (document === analysis) {
-        return uri;
-      }
-    }
-    return undefined;
+    return analysis.uri;
   }
 
   all(): DocumentAnalysis[] {

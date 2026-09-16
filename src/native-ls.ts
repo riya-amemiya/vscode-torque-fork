@@ -103,9 +103,9 @@ export async function tryStartNativeLanguageServer(
   const command = resolveServerExecutable(torqueConfiguration, workspacePath);
   if (!(await executableExists(command))) {
     output.info(
-      `Native torque-language-server not found at ${command}; using built-in Torque language features.`,
+      `Native torque-language-server not found at ${command}; using the built-in Torque WASM compiler.`,
     );
-    statusBarItem.text = "torque: built-in";
+    statusBarItem.text = "torque: wasm";
     return;
   }
 
@@ -141,7 +141,7 @@ export async function tryStartNativeLanguageServer(
         break;
       case State.StartFailed:
       case State.Stopped:
-        statusBarItem.text = "torque: built-in";
+        statusBarItem.text = "torque: wasm";
         break;
       default: {
         const exhaustive: never = event.newState;
@@ -154,7 +154,7 @@ export async function tryStartNativeLanguageServer(
     await client.start();
   } catch (error) {
     output.error(`Failed to start torque-language-server: ${String(error)}`);
-    statusBarItem.text = "torque: built-in";
+    statusBarItem.text = "torque: wasm";
     clientRef.value = undefined;
     return;
   }
@@ -172,7 +172,7 @@ export function stopNativeLanguageServer(): Thenable<void> | undefined {
 export function createTorqueStatusBar(): StatusBarItem {
   const statusBarItem = window.createStatusBarItem("torque.ls.status", StatusBarAlignment.Left, 0);
   statusBarItem.name = "Torque Language";
-  statusBarItem.text = "torque: built-in";
+  statusBarItem.text = "torque: wasm";
   statusBarItem.show();
   return statusBarItem;
 }
