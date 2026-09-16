@@ -1,4 +1,4 @@
-# V8 Torque Language Support
+# V8 Torque Language Support Fork
 
 This extension adds language support for the V8 project internal language
 [V8 Torque](https://v8.dev/docs/torque).
@@ -8,6 +8,8 @@ This repository is a fork of
 [v8/vscode-torque](https://github.com/v8/vscode-torque).
 Some changes have been made so the extension works with current
 development environments.
+
+The Marketplace identifier is `riya-amemiya.vscode-torque-fork`.
 
 ## Language server
 
@@ -24,7 +26,14 @@ setting.
 
 ## Installation instructions
 
-Open [Visual Studio Code](https://code.visualstudio.com/). Press `Ctrl+Shift+X` or `Cmd+Shift+X` to open the Extensions pane. Find and install the “V8 Torque Language Support” extension. Alternatively, install the extension from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=v8-torque.vscode-torque). Open any `.tq` file in VS Code. The extension is now activated!
+Download the `.vsix` from
+[GitHub Releases](https://github.com/riya-amemiya/vscode-torque-fork/releases).
+In Visual Studio Code, open the Extensions view, choose **Install from VSIX...**,
+and select the downloaded file. Open any `.tq` file to activate the extension.
+
+A `v*` git tag starts the release workflow, which attaches that `.vsix` to the
+GitHub Release. If the `VSCE_PAT` repository secret is set, the same workflow
+also publishes to the Visual Studio Marketplace.
 
 ## License
 

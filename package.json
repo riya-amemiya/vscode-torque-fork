@@ -1,6 +1,6 @@
 {
-  "name": "vscode-torque",
-  "displayName": "V8 Torque Language Support",
+  "name": "vscode-torque-fork",
+  "displayName": "V8 Torque Language Support Fork",
   "version": "1.0.3",
   "description": "Syntax highlighting and language server for the V8 Torque programming language",
   "categories": [
@@ -9,15 +9,16 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/v8/vscode-torque.git"
+    "url": "https://github.com/riya-amemiya/vscode-torque-fork.git"
   },
-  "publisher": "v8-torque",
+  "publisher": "riya-amemiya",
   "main": "./dist/extension.js",
   "scripts": {
     "compile": "rolldown -c",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint",
+    "package": "vsce package --no-dependencies",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "rolldown -c --minify",
     "watch": "rolldown -c --watch"
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@types/node": "26.5.0",
     "@types/vscode": "1.136.0",
+    "@vscode/vsce": "3.9.2",
     "oxfmt": "0.67.0",
     "oxlint": "1.82.0",
     "rolldown": "1.2.7",
