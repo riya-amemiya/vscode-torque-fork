@@ -101,14 +101,14 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
-        otherwise: Vec<Expr>,
+        otherwise: Vec<Stmt>,
         span: Span,
     },
     MethodCall {
         target: Box<Expr>,
         method: Ident,
         args: Vec<Expr>,
-        otherwise: Vec<Expr>,
+        otherwise: Vec<Stmt>,
         span: Span,
     },
     IntrinsicCall {

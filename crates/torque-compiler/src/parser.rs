@@ -386,6 +386,7 @@ impl<'a> Parser<'a> {
         } else {
             loop {
                 if self.eat("...") {
+                    list.rest = self.parse_name();
                     break;
                 }
                 if let Some(ty) = self.parse_type() {
@@ -397,6 +398,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 if self.eat("...") {
+                    list.rest = self.parse_name();
                     break;
                 }
             }
@@ -434,26 +436,48 @@ impl<'a> Parser<'a> {
         labels
     }
 
-    fn parse_otherwise(&mut self) -> Vec<Expr> {
+    fn parse_otherwise(&mut self) -> Vec<Stmt> {
         if !self.eat("otherwise") {
             return Vec::new();
         }
-        self.comma_separated(Self::parse_atom_expr_or_debug)
+        self.comma_separated(Self::parse_atomar_statement)
     }
 
-    fn parse_atom_expr_or_debug(&mut self) -> Option<Expr> {
+    fn parse_atomar_statement(&mut self) -> Option<Stmt> {
+        if self.at("goto") {
+            self.take();
+            let label = self.parse_name()?;
+            let args = if self.at("(") {
+                self.parse_argument_list()
+            } else {
+                Vec::new()
+            };
+            return Some(Stmt::Goto { label, args });
+        }
+        if self.at("continue") {
+            let start = self.take().unwrap();
+            return Some(Stmt::Continue {
+                span: self.span_of(start),
+            });
+        }
+        if self.at("break") {
+            let start = self.take().unwrap();
+            return Some(Stmt::Break {
+                span: self.span_of(start),
+            });
+        }
         if matches!(
             self.peek().map(|t| t.text.as_str()),
             Some("debug" | "unreachable")
         ) {
             let token = self.take().unwrap();
-            return Some(Expr::Ident {
-                namespace: Vec::new(),
-                name: self.ident_from(token),
-                generic_args: Vec::new(),
+            return Some(Stmt::Debug {
+                kind: token.text.clone(),
+                span: self.span_of(token),
             });
         }
-        self.parse_expression()
+        let expr = self.parse_expression()?;
+        Some(Stmt::Expr(expr))
     }
 
     fn parse_argument_list(&mut self) -> Vec<Expr> {
@@ -675,6 +699,24 @@ impl<'a> Parser<'a> {
                     target: Box::new(expr),
                     span,
                 };
+                continue;
+            }
+            if self.at("{")
+                && let Expr::Ident {
+                    namespace,
+                    name,
+                    generic_args,
+                } = &expr
+            {
+                let ty = TypeExpr::Basic {
+                    is_constexpr: false,
+                    namespace: namespace.clone(),
+                    name: name.clone(),
+                    generic_args: generic_args.clone(),
+                };
+                let span = expr.span();
+                let fields = self.parse_initializer_list();
+                expr = Expr::StructLit { ty, fields, span };
                 continue;
             }
             break;

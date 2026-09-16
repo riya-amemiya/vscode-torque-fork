@@ -312,3 +312,297 @@ fn compile_json_returns_symbols_and_errors() {
     assert!(json.contains("not assignable"), "{json}");
     assert!(json.contains("fromStart") || json.contains("from_start") || json.contains("symbols"));
 }
+
+fn messages(file: &torque_compiler::FileAnalysis) -> Vec<String> {
+    file.diagnostics
+        .iter()
+        .map(|item| item.message.clone())
+        .collect()
+}
+
+fn is_parser_garbage(message: &str) -> bool {
+    message == "Expected ';'"
+        || message == "Expected ')'"
+        || message == "Cannot resolve 'this'"
+        || message == "Cannot resolve 'goto'"
+        || message == "Cannot resolve 'continue'"
+        || message == "Cannot resolve 'arguments'"
+        || message == "Cannot resolve 'context'"
+        || message.contains("Cannot compare 'Smi' with 'IntegerLiteral'")
+        || message.contains("Cannot compare 'intptr' with 'IntegerLiteral'")
+        || message.contains("Cannot compare 'Smi' with 'constexpr IntegerLiteral'")
+        || message.contains("Cannot compare 'intptr' with 'constexpr IntegerLiteral'")
+        || message.contains("Type 'IntegerLiteral' is not assignable to 'Smi'")
+        || message.contains("Type 'IntegerLiteral' is not assignable to 'intptr'")
+        || message.contains("Type 'constexpr IntegerLiteral' is not assignable to 'Smi'")
+        || message.contains("Type 'constexpr IntegerLiteral' is not assignable to 'intptr'")
+}
+
+#[test]
+fn struct_methods_bind_this_and_struct_literals() {
+    let source = r#"
+struct FlatVector {
+  macro CreateJSArray(implicit context: Context)(targetKind: ElementsKind): JSAny {
+    const a: JSAny = this.fixedArray;
+    this.fixedArray = a;
+    return a;
+  }
+  fixedArray: JSAny;
+}
+macro NewFlatVector(implicit context: Context)(length: Smi): FlatVector {
+  const empty: JSAny = length > 0 ? length : 0;
+  return FlatVector{fixedArray: empty};
+}
+"#;
+    let file = compile_one("memory://flat-vector.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| is_parser_garbage(item)),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Cannot resolve 'this'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn otherwise_goto_continue_and_try_labels_are_statements() {
+    let source = r#"
+struct FastJSArrayWitness {
+  macro Recheck(): void labels CastError {}
+  macro Get(): FastJSArrayWitness { return this; }
+  macro LoadElementNoHole(index: Smi): JSAny labels FoundHole { return index; }
+  length: Smi;
+}
+macro Flatten(implicit context: Context)(source: FastJSArrayWitness, length: Smi):
+    JSAny labels Bailout {
+  let index: Smi = 0;
+  source.Recheck() otherwise goto Bailout;
+  try {
+    const element: JSAny = source.LoadElementNoHole(index) otherwise FoundHole;
+  } label FoundHole {
+    index = index;
+  }
+  if (index >= source.Get().length) goto Bailout;
+  const skipped: JSAny = source.LoadElementNoHole(index) otherwise continue;
+  return skipped;
+}
+"#;
+    let file = compile_one("memory://otherwise.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| is_parser_garbage(item)
+            || item.contains("Cannot resolve 'FoundHole'")
+            || item.contains("Cannot resolve label")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn javascript_rest_arguments_and_js_implicit_context_are_bound() {
+    let source = r#"
+extern macro ArraySpeciesCreate(context: NativeContext, o: JSReceiver, length: Number):
+    JSReceiver;
+transitioning javascript builtin ArrayPrototypeFlat(
+    js-implicit context: NativeContext, receiver: JSAny)(...arguments): JSAny {
+  const o: JSReceiver = receiver;
+  if (arguments[0] != Undefined) {
+    return arguments[0];
+  }
+  const a: JSReceiver = ArraySpeciesCreate(context, o, 0);
+  return a;
+}
+"#;
+    let file = compile_one("memory://js-builtin.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| is_parser_garbage(item)),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn js_receiver_is_assignable_to_jsany_and_compares_with_undefined() {
+    let source = r#"
+macro Main(o: JSReceiver, x: JSAny): JSAny {
+  if (x != Undefined) {
+    return o;
+  }
+  return x;
+}
+"#;
+    let file = compile_one("memory://jsany.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("not assignable") || item.contains("Cannot compare")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn integer_literals_compare_and_assign_to_numeric_types() {
+    let source = r#"
+const kMaxFlatFastStackEntries: intptr = 3072;
+macro Main(length: Smi, stackLength: intptr, n: Number): bool {
+  let target: Smi = 0;
+  return length > 0 && stackLength == 0 && n >= 9007199254740991.0;
+}
+"#;
+    let file = compile_one("memory://lits.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("not assignable") || item.contains("Cannot compare")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn qualified_enum_entries_and_dot_operators_resolve() {
+    let source = r#"
+extern enum ElementsKind {
+  PACKED_SMI_ELEMENTS,
+  PACKED_DOUBLE_ELEMENTS,
+  PACKED_ELEMENTS
+}
+extern class FixedArrayBase extends HeapObject {
+  length: Smi;
+}
+extern class FixedArray extends FixedArrayBase {}
+extern operator '.length_intptr' macro LoadAndUntagFixedArrayBaseLength(FixedArrayBase): intptr;
+extern operator '.objects[]' macro LoadFixedArrayElement(FixedArray, Smi): Object;
+extern operator '.objects[]=' macro StoreFixedArrayElement(FixedArray, Smi, JSAny): void;
+extern operator '.elements_kind' macro LoadMapElementsKind(Map): ElementsKind;
+macro ReadKind(map: Map, array: FixedArray, index: Smi, value: JSAny): ElementsKind {
+  array.objects[index] = value;
+  const loaded: Object = array.objects[index];
+  const len: intptr = array.length_intptr;
+  return map.elements_kind == ElementsKind::PACKED_SMI_ELEMENTS ?
+      ElementsKind::PACKED_ELEMENTS : ElementsKind::PACKED_DOUBLE_ELEMENTS;
+}
+"#;
+    let file = compile_one("memory://ops.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("has no field")
+            || item.contains("Cannot resolve 'PACKED")
+            || item.contains("Cannot resolve 'k")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn does_not_cascade_field_errors_on_unresolved_receivers() {
+    let source = r#"
+macro Main(x: MissingType): Smi {
+  return x.fixedArray;
+}
+"#;
+    let file = compile_one("memory://cascade.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("has no field 'fixedArray'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn array_flat_shaped_v8_builtins_do_not_emit_parser_garbage() {
+    let source = r#"
+extern enum ElementsKind { PACKED_SMI_ELEMENTS, PACKED_DOUBLE_ELEMENTS, PACKED_ELEMENTS }
+extern enum MessageTemplate { kFlattenPastSafeLength }
+extern class FastJSArray extends JSObject { length: Number; map: Map; }
+extern class FastJSArrayForRead extends FastJSArray {}
+extern class FastJSArrayWitness {
+  macro Recheck(): void labels CastError {}
+  macro Get(): FastJSArray { return this.array; }
+  macro LoadElementNoHole(index: Smi): JSAny labels FoundHole { return index; }
+  array: FastJSArray;
+}
+extern class GrowableFixedArray {
+  macro Push(v: JSAny): void {}
+  length: intptr;
+  array: FixedArray;
+}
+extern class FixedArray extends HeapObject {}
+extern operator '.length_intptr' macro LoadLen(FixedArray): intptr;
+extern operator '.objects[]' macro LoadObj(FixedArray, Smi): Object;
+extern operator '.elements_kind' macro LoadKind(Map): ElementsKind;
+extern macro TrySmiAdd(x: Smi, y: Smi): Smi labels Overflow;
+extern macro TrySmiSub(x: Smi, y: Smi): Smi labels Overflow;
+extern macro ArraySpeciesCreate(context: NativeContext, o: JSReceiver, length: Number): JSReceiver;
+extern macro NewGrowableFixedArray(): GrowableFixedArray;
+const kMaxFlatFastStackEntries: intptr = 3072;
+struct FlatVector {
+  macro CreateJSArray(implicit context: Context)(targetKind: ElementsKind): JSAny {
+    return this.fixedArray;
+  }
+  macro StoreResult(implicit context: Context)(index: Smi, result: JSAny): void {
+    this.fixedArray.objects[index] = result;
+  }
+  fixedArray: FixedArray;
+}
+macro NewFlatVector(implicit context: Context)(length: Smi): FlatVector {
+  return FlatVector{fixedArray: kEmptyFixedArray};
+}
+transitioning macro FlattenIntoArrayFast(
+    implicit context: Context)(source: FastJSArray, sourceLength: Number,
+    depth: Smi): Number labels Bailout(Number, Number) {
+  const fastLength: Smi = Cast<Smi>(sourceLength) otherwise goto Bailout;
+  let stack = NewGrowableFixedArray();
+  let fastOW = source;
+  let index: Smi = 0;
+  fastOW.Recheck() otherwise goto Bailout(0, 0);
+  try {
+    const element: JSAny = fastOW.LoadElementNoHole(index) otherwise FoundHole;
+  } label FoundHole {
+    index++;
+  }
+  if (stack.length >= kMaxFlatFastStackEntries) goto Bailout(0, 0);
+  stack.Push(source);
+  const next: Smi = TrySmiAdd(index, 1) otherwise goto Bailout(0, 0);
+  const kind: ElementsKind = source.map.elements_kind;
+  if (kind == ElementsKind::PACKED_SMI_ELEMENTS) {
+    return 0;
+  }
+  return next;
+}
+transitioning javascript builtin ArrayPrototypeFlat(
+    js-implicit context: NativeContext, receiver: JSAny)(...arguments): JSAny {
+  const o: JSReceiver = receiver;
+  if (arguments[0] != Undefined) {
+    return arguments[0];
+  }
+  const a: JSReceiver = ArraySpeciesCreate(context, o, 0);
+  return a;
+}
+"#;
+    let file = compile_one("memory://array-flat-shaped.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| is_parser_garbage(item)),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn dump_real_array_flat() {
+    let path = "/tmp/v8-tq/array-flat.tq";
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let file = compile_one("memory://array-flat.tq", &text);
+    let garbage: Vec<_> = messages(&file)
+        .into_iter()
+        .filter(|item| is_parser_garbage(item))
+        .collect();
+    assert!(garbage.is_empty(), "{garbage:?}");
+}
