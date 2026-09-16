@@ -28,5 +28,5 @@ mod types;
 mod wasm;
 
 pub use check::FileAnalysis;
-pub use compile::{compile, compile_json, CompileResult, SourceFileInput};
+pub use compile::{CompileResult, SourceFileInput, compile, compile_json};
 pub use diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};

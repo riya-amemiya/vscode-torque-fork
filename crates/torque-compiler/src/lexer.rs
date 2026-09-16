@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::token::{is_keyword, Token, TokenKind};
+use crate::token::{Token, TokenKind, is_keyword};
 
 const MULTI_PUNCT: &[&str] = &[
     "...", "::", "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "->", "+=", "-=", "*=",
@@ -376,24 +376,32 @@ mod tests {
             })
             .collect();
         assert!(kinds.iter().any(|k| k.contains("javascript")));
-        assert!(kinds
-            .iter()
-            .any(|k| k == "keyword:builtin" || k.ends_with("builtin")));
-        assert!(tokens
-            .iter()
-            .any(|t| t.text == "Foo" && t.kind == TokenKind::Identifier));
+        assert!(
+            kinds
+                .iter()
+                .any(|k| k == "keyword:builtin" || k.ends_with("builtin"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.text == "Foo" && t.kind == TokenKind::Identifier)
+        );
         assert!(tokens.iter().any(|t| t.text == "js-implicit"));
         assert!(tokens.iter().any(|t| t.text == "void"));
     }
 
     #[test]
     fn reports_unterminated_strings_and_comments() {
-        assert!(tokenize("\"hello")
-            .iter()
-            .any(|t| t.kind == TokenKind::Error));
-        assert!(tokenize("/* oops")
-            .iter()
-            .any(|t| t.message.as_deref() == Some("Unterminated block comment")));
+        assert!(
+            tokenize("\"hello")
+                .iter()
+                .any(|t| t.kind == TokenKind::Error)
+        );
+        assert!(
+            tokenize("/* oops")
+                .iter()
+                .any(|t| t.message.as_deref() == Some("Unterminated block comment"))
+        );
     }
 
     #[test]

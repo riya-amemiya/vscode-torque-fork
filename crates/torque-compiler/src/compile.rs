@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::check::{check_files, FileAnalysis};
+use crate::check::{FileAnalysis, check_files};
 use crate::parser::parse_file;
 
 #[derive(Clone, Debug, Deserialize)]

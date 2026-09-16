@@ -20,7 +20,7 @@ thread_local! {
     static RESULT: RefCell<Vec<u8>> = RefCell::new(Vec::new());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn torque_alloc(size: u32) -> *mut u8 {
     let mut buffer = vec![0u8; size as usize];
     let ptr = buffer.as_mut_ptr();
@@ -28,7 +28,7 @@ pub extern "C" fn torque_alloc(size: u32) -> *mut u8 {
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn torque_free(ptr: *mut u8, size: u32) {
     if ptr.is_null() {
         return;
@@ -38,7 +38,7 @@ pub extern "C" fn torque_free(ptr: *mut u8, size: u32) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn torque_compile(ptr: *const u8, len: u32) -> *const u8 {
     let input = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
     let text = std::str::from_utf8(input).unwrap_or("");
@@ -51,7 +51,7 @@ pub extern "C" fn torque_compile(ptr: *const u8, len: u32) -> *const u8 {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn torque_result_len() -> u32 {
     RESULT.with(|result| result.borrow().len() as u32)
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use torque_compiler::{compile, SourceFileInput};
+use torque_compiler::{SourceFileInput, compile};
 
 const SAMPLE: &str = r#"
 namespace math {
@@ -111,9 +111,11 @@ transitioning macro ArrayIsArray_Inline(
         "{:?}",
         file.diagnostics
     );
-    assert!(names(&file)
-        .iter()
-        .any(|n| n == "macro:ArrayIsArray_Inline"));
+    assert!(
+        names(&file)
+            .iter()
+            .any(|n| n == "macro:ArrayIsArray_Inline")
+    );
 }
 
 #[test]

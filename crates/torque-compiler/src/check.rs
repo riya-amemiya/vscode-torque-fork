@@ -1580,11 +1580,7 @@ fn nonempty(ns: &str) -> Option<String> {
 }
 
 fn nonempty_ref(ns: &str) -> Option<&str> {
-    if ns.is_empty() {
-        None
-    } else {
-        Some(ns)
-    }
+    if ns.is_empty() { None } else { Some(ns) }
 }
 
 fn qualify(ns: &str, name: &str) -> String {
