@@ -1,0 +1,115 @@
+name: Bug report
+description: Report a problem with this Torque editor extension.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug in this independent fork of
+        [v8/vscode-torque](https://github.com/v8/vscode-torque).
+
+        This form is for the `riya-amemiya.vscode-torque-fork` extension.
+        Do not use a public issue for security reports; see [SECURITY.md](https://github.com/riya-amemiya/vscode-torque-fork/blob/main/SECURITY.md).
+  - type: checkboxes
+    id: existing
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search [existing issues](https://github.com/riya-amemiya/vscode-torque-fork/issues) first.
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature area
+      options:
+        - Go to definition
+        - Completions and snippets
+        - Syntax diagnostics
+        - Hover
+        - Document outline
+        - Native torque-language-server
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+      placeholder: Opening a .tq file showed a false syntax error on...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps that reproduce the problem.
+      placeholder: |
+        1. Open a .tq file
+        2. ...
+        3. See the unexpected result
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample Torque
+      description: A short `.tq` snippet that reproduces the issue, if you can share one.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: The installed version of `riya-amemiya.vscode-torque-fork` (for example 1.2.1).
+      placeholder: 1.2.1
+    validations:
+      required: true
+  - type: input
+    id: editor-version
+    attributes:
+      label: Editor version
+      description: VS Code, Cursor, or other VS Code-compatible editor version.
+      placeholder: VS Code 1.106.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: language-server
+    attributes:
+      label: Native language server
+      description: The native `torque-language-server` is optional. Built-in editor features should still work without it.
+      options:
+        - "No, only the built-in language service"
+        - "Yes, torque-language-server is running"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, or anything else that would help. You can drag files into this field.
+    validations:
+      required: false
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow the [Code of Conduct](https://github.com/riya-amemiya/vscode-torque-fork/blob/main/CODE_OF_CONDUCT.md).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
