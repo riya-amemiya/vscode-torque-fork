@@ -2,12 +2,12 @@
 
 This extension adds language support for the V8 project internal language
 [V8 Torque](https://v8.dev/docs/torque).
-This is not an officially supported Google product.
 
-This repository is a fork of
+This repository is an independent fork of
 [v8/vscode-torque](https://github.com/v8/vscode-torque).
-Some changes have been made so the extension works with current
-development environments.
+Some files have been modified so the extension works with current
+development environments. It is not affiliated with, endorsed by, or
+supported by Google LLC or the V8 project.
 
 The Marketplace identifier is `riya-amemiya.vscode-torque-fork`.
 
@@ -37,5 +37,14 @@ also publishes to the Visual Studio Marketplace.
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.
-See the [LICENSE](LICENSE) file for the full text.
+This project is a derivative work of
+[v8/vscode-torque](https://github.com/v8/vscode-torque),
+Copyright 2019 The VSCode V8 Torque Authors, licensed under the
+Apache License, Version 2.0.
+
+Modifications in this repository are Copyright 2026 Riya Amemiya
+and are also licensed under the Apache License, Version 2.0.
+
+See [LICENSE](LICENSE) for the full license text and [NOTICE](NOTICE)
+for attribution. See [CONTRIBUTING.md](CONTRIBUTING.md) if you want
+to send a change to this fork.

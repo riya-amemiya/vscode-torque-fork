@@ -1,4 +1,5 @@
 // Copyright 2019 The VSCode V8 Torque Authors.
+// Copyright 2026 Riya Amemiya.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,9 +12,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// This file has been modified from the original vscode-torque sources.
 
-// The file out/extension.js gets automatically created from
-// src/extension.ts. out/extension.js should not be modified manually.
+// The file dist/extension.js is generated from src/extension.ts and
+// should not be modified manually.
 
 import * as path from "node:path";
 import {
