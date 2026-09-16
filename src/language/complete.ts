@@ -56,7 +56,7 @@ function matchesPrefix(label: string, prefix: string): boolean {
   if (prefix === "") {
     return true;
   }
-  return label.toLowerCase().startsWith(prefix.toLowerCase().replace(/^@/, "@").replace(/^#/, "#"));
+  return label.toLowerCase().startsWith(prefix.toLowerCase());
 }
 
 export function completionsFor(
