@@ -18,129 +18,24 @@
 // The file dist/extension.js is generated from src/extension.ts and
 // should not be modified manually.
 
-import * as path from "node:path";
+import { window, type ExtensionContext } from "vscode";
+import { TorqueWorkspace } from "./language/workspace";
 import {
-  StatusBarAlignment,
-  window,
-  workspace,
-  type ExtensionContext,
-  type LogOutputChannel,
-  type WorkspaceConfiguration,
-} from "vscode";
-import {
-  CloseAction,
-  ErrorAction,
-  LanguageClient,
-  RevealOutputChannelOn,
-  State,
-  type CloseHandlerResult,
-  type ErrorHandler,
-  type ErrorHandlerResult,
-  type LanguageClientOptions,
-  type Message,
-  type ServerOptions,
-} from "vscode-languageclient/node";
-
-const clientRef: { value: LanguageClient | undefined } = { value: undefined };
-
-class TorqueErrorHandler implements ErrorHandler {
-  constructor(private readonly output: LogOutputChannel) {}
-
-  error(
-    error: Error,
-    message: Message | undefined,
-    _count: number | undefined,
-  ): ErrorHandlerResult {
-    this.output.error(error.toString());
-    if (message !== undefined) {
-      this.output.error(message.toString());
-    }
-    return { action: ErrorAction.Continue };
-  }
-
-  closed(): CloseHandlerResult {
-    return { action: CloseAction.DoNotRestart };
-  }
-}
-
-function resolveServerExecutable(config: WorkspaceConfiguration): string {
-  const configured = config.get<string | null>("executable");
-  if (typeof configured === "string" && configured.length > 0) {
-    return configured;
-  }
-  const workspacePath = workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
-  return path.join(workspacePath, "out", "x64.release", "torque-language-server");
-}
-
-function resolveServerArguments(config: WorkspaceConfiguration): string[] {
-  if (config.get<boolean>("logging") !== true) {
-    return [];
-  }
-  const logfile = config.get<string>("logfile");
-  if (logfile === undefined || logfile === "") {
-    return [];
-  }
-  return ["-l", logfile];
-}
+  createTorqueStatusBar,
+  stopNativeLanguageServer,
+  tryStartNativeLanguageServer,
+} from "./native-ls";
+import { registerTorqueLanguage } from "./torque-language";
 
 export async function activate(context: ExtensionContext) {
-  const statusBarItem = window.createStatusBarItem("torque.ls.status", StatusBarAlignment.Left, 0);
-  statusBarItem.name = "Torque Language Server";
-  statusBarItem.text = "torque-ls: <unknown>";
-  statusBarItem.show();
-
-  const torqueConfiguration = workspace.getConfiguration("torque.ls");
-  const serverOptions: ServerOptions = {
-    command: resolveServerExecutable(torqueConfiguration),
-    args: resolveServerArguments(torqueConfiguration),
-  };
-
-  const outputChannel = window.createOutputChannel("Torque Language Server", {
-    log: true,
-  });
-
-  const clientOptions: LanguageClientOptions = {
-    diagnosticCollectionName: "torque",
-    documentSelector: [{ scheme: "file", language: "torque" }],
-    errorHandler: new TorqueErrorHandler(outputChannel),
-    initializationFailedHandler: (error) => {
-      outputChannel.error(String(error));
-      return false;
-    },
-    outputChannel,
-    revealOutputChannelOn: RevealOutputChannelOn.Info,
-  };
-
-  const client = new LanguageClient(
-    "torque",
-    "Torque Language Server",
-    serverOptions,
-    clientOptions,
-  );
-  clientRef.value = client;
-
-  context.subscriptions.push(statusBarItem, outputChannel);
-
-  client.onDidChangeState((event) => {
-    if (event.newState === State.Running) {
-      statusBarItem.text = "torque-ls: Running";
-    } else if (event.newState === State.Starting) {
-      statusBarItem.text = "torque-ls: Starting";
-    } else if (event.newState === State.StartFailed) {
-      statusBarItem.text = "torque-ls: Start failed";
-    } else {
-      statusBarItem.text = "torque-ls: Stopped";
-    }
-  });
-
-  await client.start();
-
-  const urls = await workspace.findFiles("**/*.tq");
-  await client.sendNotification("torque/fileList", {
-    files: urls.map((url) => url.toString()),
-  });
+  const output = window.createOutputChannel("Torque Language Server", { log: true });
+  const statusBarItem = createTorqueStatusBar();
+  const store = new TorqueWorkspace();
+  context.subscriptions.push(output, statusBarItem);
+  registerTorqueLanguage(context, store);
+  await tryStartNativeLanguageServer(context, output, statusBarItem);
 }
 
 export function deactivate(): Thenable<void> | undefined {
-  return clientRef.value?.stop();
+  return stopNativeLanguageServer();
 }

@@ -25,6 +25,7 @@ bun run lint
 bun run format:check
 bun run typecheck
 bun run compile
+bun test src
 ```
 
 `bun run format` rewrites files to the repository style.
