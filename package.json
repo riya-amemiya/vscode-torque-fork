@@ -1,7 +1,7 @@
 {
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Syntax highlighting, go-to-definition, completions, and syntax diagnostics for V8 Torque",
   "categories": [
     "Programming Languages"
