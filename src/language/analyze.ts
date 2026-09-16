@@ -119,6 +119,15 @@ class TokenCursor {
     }
     return false;
   }
+
+  nextNonTrivia(): Token | undefined {
+    this.peek();
+    let index = this.index + 1;
+    while (index < this.tokens.length && isTrivia(this.tokens[index])) {
+      index += 1;
+    }
+    return this.tokens[index];
+  }
 }
 
 function skipBalanced(cursor: TokenCursor, open: string, close: string): void {
@@ -393,6 +402,10 @@ function parseBlock(
     }
 
     if (token.kind === "keyword" && token.text in CALLABLE_KINDS) {
+      if (cursor.nextNonTrivia()?.text === "::") {
+        cursor.take();
+        continue;
+      }
       const kind = CALLABLE_KINDS[token.text];
       cursor.take();
       const name = callableName(cursor);
