@@ -8,9 +8,14 @@ Please do **not** sign or submit a [Google Contributor License
 Agreement](https://cla.developers.google.com/) for this repository. That CLA
 applies to Google-hosted projects, not to this fork.
 
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a
+public issue for security reports.
+
 ## How to contribute
 
-1. Open an issue before starting a large change.
+1. Open an issue before starting a large change. Use the bug, feature, or
+   question templates when they apply.
 2. Fork the repository and open a pull request against `main`.
 3. Keep the pull request focused on one change.
 

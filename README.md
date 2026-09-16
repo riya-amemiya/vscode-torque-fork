@@ -63,5 +63,10 @@ Modifications in this repository are Copyright 2026 Riya Amemiya
 and are also licensed under the Apache License, Version 2.0.
 
 See [LICENSE](LICENSE) for the full license text and [NOTICE](NOTICE)
-for attribution. See [CONTRIBUTING.md](CONTRIBUTING.md) if you want
-to send a change to this fork.
+for attribution.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security policy](SECURITY.md)
