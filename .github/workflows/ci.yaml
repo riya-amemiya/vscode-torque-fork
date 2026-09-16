@@ -28,3 +28,11 @@ jobs:
             run: bun run typecheck
           - name: Compile
             run: bun run compile
+      - name: Package
+        run: bun run package
+      - name: VSIX must not contain source maps
+        run: |
+          if unzip -Z1 ./*.vsix | grep -E '\.map$'; then
+            echo "Source maps must not be packaged in the VSIX" >&2
+            exit 1
+          fi

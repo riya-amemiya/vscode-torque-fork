@@ -1,5 +1,7 @@
 import { defineConfig } from "rolldown";
 
+const minify = process.argv.includes("--minify");
+
 export default defineConfig({
   input: "src/extension.ts",
   platform: "node",
@@ -7,7 +9,9 @@ export default defineConfig({
   output: {
     file: "dist/extension.js",
     format: "cjs",
-    sourcemap: true,
+    sourcemap: !minify,
     exports: "named",
+    minify,
+    comments: !minify,
   },
 });

@@ -10,3 +10,4 @@ tsconfig.json
 .oxfmtrc.json
 rolldown.config.mjs
 bun.lock
+**/*.map
