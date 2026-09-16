@@ -14,9 +14,6 @@ applies to Google-hosted projects, not to this fork.
 2. Fork the repository and open a pull request against `main`.
 3. Keep the pull request focused on one change.
 
-Changes meant for the official V8 extension should go to
-[v8/vscode-torque](https://github.com/v8/vscode-torque) instead.
-
 ## Development
 
 Install dependencies with [Bun](https://bun.sh/), then run the same checks CI
