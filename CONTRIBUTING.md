@@ -31,6 +31,9 @@ bun run format:check
 bun run typecheck
 bun run compile
 bun test src
+bun run test:compiler
+cargo +nightly fmt --all -- --check
+cargo clippy --workspace -- -D warnings
 ```
 
 `bun run format` rewrites files to the repository style.

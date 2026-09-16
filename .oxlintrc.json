@@ -4,5 +4,5 @@
     "correctness": "error",
     "suspicious": "warn"
   },
-  "ignorePatterns": ["dist/**", "node_modules/**", "out/**"]
+  "ignorePatterns": ["dist/**", "node_modules/**", "out/**", "**/*.d.ts"]
 }

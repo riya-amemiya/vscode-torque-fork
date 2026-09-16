@@ -14,6 +14,7 @@
 
 import { tokenize, type Token } from "./lexer";
 import { createLineTable, rangeFromOffsets, type LineTable, type Range } from "./positions";
+import { compileSources, type CompilerFile, type CompilerSymbol } from "./wasm";
 
 export type TorqueSymbolKind =
   | "builtin"
@@ -28,6 +29,21 @@ export type TorqueSymbolKind =
   | "shape"
   | "struct"
   | "type";
+
+const SYMBOL_KINDS: ReadonlySet<string> = new Set([
+  "builtin",
+  "class",
+  "const",
+  "enum",
+  "field",
+  "intrinsic",
+  "macro",
+  "namespace",
+  "runtime",
+  "shape",
+  "struct",
+  "type",
+]);
 
 export type TorqueSymbol = {
   name: string;
@@ -51,495 +67,99 @@ export type IncludeReference = {
   end: number;
 };
 
+export type DefinitionMapping = {
+  fromStart: number;
+  fromEnd: number;
+  toUri: string;
+  toStart: number;
+  toEnd: number;
+};
+
 export type DocumentAnalysis = {
+  uri: string;
   text: string;
   tokens: Token[];
   symbols: TorqueSymbol[];
   diagnostics: TorqueDiagnostic[];
   includes: IncludeReference[];
+  definitions: DefinitionMapping[];
   lines: LineTable;
 };
 
-const OPEN_TO_CLOSE: Record<string, string> = {
-  "(": ")",
-  "[": "]",
-  "{": "}",
-};
-
-const CALLABLE_KINDS: Record<string, TorqueSymbolKind> = {
-  builtin: "builtin",
-  intrinsic: "intrinsic",
-  macro: "macro",
-  runtime: "runtime",
-};
-
-const TYPE_KINDS: Record<string, TorqueSymbolKind> = {
-  class: "class",
-  enum: "enum",
-  shape: "shape",
-  struct: "struct",
-  type: "type",
-};
-
-function isTrivia(token: Token): boolean {
-  return token.kind === "comment";
+function asSymbolKind(kind: string): TorqueSymbolKind {
+  if (SYMBOL_KINDS.has(kind)) {
+    return kind as TorqueSymbolKind;
+  }
+  return "const";
 }
 
-class TokenCursor {
-  readonly tokens: Token[];
-  index = 0;
-
-  constructor(tokens: Token[]) {
-    this.tokens = tokens;
-  }
-
-  peek(): Token | undefined {
-    while (this.index < this.tokens.length && isTrivia(this.tokens[this.index])) {
-      this.index += 1;
-    }
-    return this.tokens[this.index];
-  }
-
-  take(): Token | undefined {
-    const token = this.peek();
-    if (token !== undefined) {
-      this.index += 1;
-    }
-    return token;
-  }
-
-  at(text: string): boolean {
-    return this.peek()?.text === text;
-  }
-
-  eat(text: string): boolean {
-    if (this.at(text)) {
-      this.take();
-      return true;
-    }
-    return false;
-  }
-
-  nextNonTrivia(): Token | undefined {
-    this.peek();
-    let index = this.index + 1;
-    while (index < this.tokens.length && isTrivia(this.tokens[index])) {
-      index += 1;
-    }
-    return this.tokens[index];
-  }
-}
-
-function skipBalanced(cursor: TokenCursor, open: string, close: string): void {
-  if (!cursor.eat(open)) {
-    return;
-  }
-  let depth = 1;
-  while (cursor.peek() !== undefined && depth > 0) {
-    const token = cursor.take();
-    if (token === undefined) {
-      return;
-    }
-    if (token.text === open) {
-      depth += 1;
-    } else if (token.text === close) {
-      depth -= 1;
-    }
-  }
-}
-
-function readQualifiedName(
-  cursor: TokenCursor,
-): { name: string; start: number; end: number } | undefined {
-  const first = cursor.peek();
-  if (first === undefined || (first.kind !== "identifier" && first.kind !== "keyword")) {
-    return undefined;
-  }
-  cursor.take();
-  let name = first.text;
-  let end = first.end;
-  while (cursor.eat("::")) {
-    const next = cursor.peek();
-    if (next === undefined || (next.kind !== "identifier" && next.kind !== "keyword")) {
-      break;
-    }
-    cursor.take();
-    name += `::${next.text}`;
-    end = next.end;
-  }
-  return { name, start: first.start, end };
-}
-
-function callableName(
-  cursor: TokenCursor,
-): { name: string; start: number; end: number } | undefined {
-  if (cursor.eat("operator")) {
-    const next = cursor.take();
-    if (next === undefined) {
-      return undefined;
-    }
-    return { name: `operator${next.text}`, start: next.start, end: next.end };
-  }
-  return readQualifiedName(cursor);
-}
-
-function collectDelimiters(tokens: Token[]): TorqueDiagnostic[] {
-  const diagnostics: TorqueDiagnostic[] = [];
-  const stack: Token[] = [];
-  for (const token of tokens) {
-    if (token.kind !== "punct") {
-      continue;
-    }
-    const closer = OPEN_TO_CLOSE[token.text];
-    if (closer !== undefined) {
-      stack.push(token);
-      continue;
-    }
-    if (token.text === ")" || token.text === "]" || token.text === "}") {
-      const open = stack.at(-1);
-      if (open === undefined) {
-        diagnostics.push({
-          message: `Unmatched '${token.text}'`,
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      if (OPEN_TO_CLOSE[open.text] !== token.text) {
-        diagnostics.push({
-          message: `Expected '${OPEN_TO_CLOSE[open.text]}' but found '${token.text}'`,
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-      }
-      stack.pop();
-    }
-  }
-  for (const open of stack) {
-    diagnostics.push({
-      message: `Unclosed '${open.text}'`,
-      start: open.start,
-      end: open.end,
-      severity: "error",
-    });
-  }
-  return diagnostics;
-}
-
-function parseBlock(
-  cursor: TokenCursor,
-  symbols: TorqueSymbol[],
-  diagnostics: TorqueDiagnostic[],
-  includes: IncludeReference[],
-  containerName: string | undefined,
-  mode: "top" | "type" | "code",
-): void {
-  while (cursor.peek() !== undefined && !cursor.at("}")) {
-    const token = cursor.peek();
-    if (token === undefined) {
-      return;
-    }
-
-    if (token.kind === "error") {
-      diagnostics.push({
-        message: token.message ?? "Invalid syntax",
-        start: token.start,
-        end: token.end,
-        severity: "error",
-      });
-      cursor.take();
-      continue;
-    }
-
-    if (token.kind === "include") {
-      cursor.take();
-      const pathToken = cursor.peek();
-      if (pathToken?.kind === "string") {
-        cursor.take();
-        includes.push({
-          path: pathToken.text.slice(1, -1),
-          start: pathToken.start + 1,
-          end: pathToken.end - 1,
-        });
-      } else {
-        diagnostics.push({
-          message: "Expected string path after #include",
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-      }
-      continue;
-    }
-
-    if (token.kind === "annotation") {
-      cursor.take();
-      if (cursor.at("(")) {
-        skipBalanced(cursor, "(", ")");
-      }
-      continue;
-    }
-
-    if (
-      token.kind === "keyword" &&
-      (token.text === "extern" ||
-        token.text === "transient" ||
-        token.text === "transitioning" ||
-        token.text === "javascript" ||
-        token.text === "constexpr" ||
-        token.text === "weak")
-    ) {
-      cursor.take();
-      continue;
-    }
-
-    if (token.kind === "keyword" && token.text === "namespace") {
-      cursor.take();
-      const name = readQualifiedName(cursor);
-      if (name === undefined) {
-        diagnostics.push({
-          message: "Expected namespace name",
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      symbols.push({
-        name: name.name,
-        kind: "namespace",
-        start: name.start,
-        end: name.end,
-        containerName,
-      });
-      if (cursor.eat("{")) {
-        parseBlock(cursor, symbols, diagnostics, includes, name.name, "top");
-        if (!cursor.eat("}")) {
-          diagnostics.push({
-            message: "Expected '}' to close namespace",
-            start: name.start,
-            end: name.end,
-            severity: "error",
-          });
-        }
-      }
-      continue;
-    }
-
-    if (token.kind === "keyword" && token.text === "bitfield") {
-      cursor.take();
-      if (!cursor.eat("struct")) {
-        diagnostics.push({
-          message: "Expected 'struct' after 'bitfield'",
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      const name = readQualifiedName(cursor);
-      if (name === undefined) {
-        diagnostics.push({
-          message: "Expected bitfield struct name",
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      symbols.push({
-        name: name.name,
-        kind: "struct",
-        start: name.start,
-        end: name.end,
-        containerName,
-        detail: "bitfield struct",
-      });
-      while (cursor.peek() !== undefined && !cursor.at("{") && !cursor.at(";")) {
-        cursor.take();
-      }
-      if (cursor.eat("{")) {
-        parseBlock(cursor, symbols, diagnostics, includes, name.name, "type");
-        cursor.eat("}");
-      } else {
-        cursor.eat(";");
-      }
-      continue;
-    }
-
-    if (token.kind === "keyword" && token.text in TYPE_KINDS) {
-      const kind = TYPE_KINDS[token.text];
-      cursor.take();
-      const name = readQualifiedName(cursor);
-      if (name === undefined) {
-        diagnostics.push({
-          message: `Expected ${token.text} name`,
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      symbols.push({
-        name: name.name,
-        kind,
-        start: name.start,
-        end: name.end,
-        containerName,
-      });
-      while (cursor.peek() !== undefined && !cursor.at("{") && !cursor.at(";")) {
-        cursor.take();
-      }
-      if (cursor.eat("{")) {
-        parseBlock(cursor, symbols, diagnostics, includes, name.name, "type");
-        cursor.eat("}");
-      } else {
-        cursor.eat(";");
-      }
-      continue;
-    }
-
-    if (token.kind === "keyword" && token.text in CALLABLE_KINDS) {
-      if (cursor.nextNonTrivia()?.text === "::") {
-        cursor.take();
-        continue;
-      }
-      const kind = CALLABLE_KINDS[token.text];
-      cursor.take();
-      const name = callableName(cursor);
-      if (name === undefined) {
-        diagnostics.push({
-          message: `Expected ${token.text} name`,
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      const detailStart = name.end;
-      while (cursor.peek() !== undefined && !cursor.at("{") && !cursor.at(";")) {
-        cursor.take();
-      }
-      const beforeBody = cursor.peek();
-      symbols.push({
-        name: name.name,
-        kind,
-        start: name.start,
-        end: name.end,
-        containerName,
-        detail:
-          beforeBody === undefined
-            ? undefined
-            : cursor.tokens
-                .filter((item) => item.start >= detailStart && item.end <= beforeBody.start)
-                .map((item) => item.text)
-                .join(" ")
-                .trim() || undefined,
-      });
-      if (cursor.eat("{")) {
-        parseBlock(cursor, symbols, diagnostics, includes, name.name, "code");
-        cursor.eat("}");
-      } else {
-        cursor.eat(";");
-      }
-      continue;
-    }
-
-    if (token.kind === "keyword" && (token.text === "let" || token.text === "const")) {
-      const kind = "const";
-      cursor.take();
-      const name = readQualifiedName(cursor);
-      if (name === undefined) {
-        diagnostics.push({
-          message: `Expected identifier after '${token.text}'`,
-          start: token.start,
-          end: token.end,
-          severity: "error",
-        });
-        continue;
-      }
-      symbols.push({
-        name: name.name,
-        kind,
-        start: name.start,
-        end: name.end,
-        containerName,
-      });
-      while (cursor.peek() !== undefined && !cursor.at(";") && !cursor.at("{") && !cursor.at("}")) {
-        cursor.take();
-      }
-      cursor.eat(";");
-      continue;
-    }
-
-    if (token.kind === "identifier" && mode === "type" && containerName !== undefined) {
-      const name = token;
-      const saved = cursor.index;
-      cursor.take();
-      if (cursor.at(":")) {
-        cursor.take();
-        symbols.push({
-          name: name.text,
-          kind: "field",
-          start: name.start,
-          end: name.end,
-          containerName,
-        });
-        while (
-          cursor.peek() !== undefined &&
-          !cursor.at(";") &&
-          !cursor.at("{") &&
-          !cursor.at("}")
-        ) {
-          cursor.take();
-        }
-        cursor.eat(";");
-        continue;
-      }
-      cursor.index = saved;
-    }
-
-    if (cursor.eat("{")) {
-      parseBlock(cursor, symbols, diagnostics, includes, containerName, mode);
-      cursor.eat("}");
-      continue;
-    }
-
-    cursor.take();
-  }
-}
-
-export function analyzeDocument(text: string): DocumentAnalysis {
-  const tokens = tokenize(text);
-  const symbols: TorqueSymbol[] = [];
-  const includes: IncludeReference[] = [];
-  const diagnostics: TorqueDiagnostic[] = [
-    ...tokens
-      .filter((token) => token.kind === "error")
-      .map((token) => ({
-        message: token.message ?? "Invalid syntax",
-        start: token.start,
-        end: token.end,
-        severity: "error" as const,
-      })),
-    ...collectDelimiters(tokens),
-  ];
-  parseBlock(new TokenCursor(tokens), symbols, diagnostics, includes, undefined, "top");
-  const unique = new Map<string, TorqueDiagnostic>();
-  for (const diagnostic of diagnostics) {
-    unique.set(`${diagnostic.start}:${diagnostic.end}:${diagnostic.message}`, diagnostic);
-  }
-  const merged = [...unique.values()];
-  merged.sort((left, right) => left.start - right.start);
+function toSymbol(symbol: CompilerSymbol): TorqueSymbol {
   return {
+    name: symbol.name,
+    kind: asSymbolKind(symbol.kind),
+    start: symbol.start,
+    end: symbol.end,
+    containerName: symbol.containerName,
+    detail: symbol.detail,
+  };
+}
+
+export function analysisFromCompiler(
+  uri: string,
+  text: string,
+  file: CompilerFile,
+): DocumentAnalysis {
+  return {
+    uri,
     text,
-    tokens,
-    symbols,
-    diagnostics: merged,
-    includes,
+    tokens: tokenize(text),
+    symbols: file.symbols.map(toSymbol),
+    diagnostics: file.diagnostics.map((item) => ({
+      message: item.message,
+      start: item.start,
+      end: item.end,
+      severity: "error",
+    })),
+    includes: file.includes.map((item) => ({
+      path: item.path,
+      start: item.start,
+      end: item.end,
+    })),
+    definitions: file.definitions.map((item) => ({
+      fromStart: item.fromStart,
+      fromEnd: item.fromEnd,
+      toUri: item.toUri,
+      toStart: item.toStart,
+      toEnd: item.toEnd,
+    })),
     lines: createLineTable(text),
+  };
+}
+
+export function analyzeDocuments(
+  files: Array<{ uri: string; text: string }>,
+): Map<string, DocumentAnalysis> {
+  const compiled = compileSources(files);
+  const analyses = new Map<string, DocumentAnalysis>();
+  for (const file of compiled) {
+    const source = files.find((item) => item.uri === file.uri)?.text ?? "";
+    analyses.set(file.uri, analysisFromCompiler(file.uri, source, file));
+  }
+  return analyses;
+}
+
+export function analyzeDocument(text: string, uri = "memory://document.tq"): DocumentAnalysis {
+  const files = analyzeDocuments([{ uri, text }]);
+  return files.get(uri) ?? analysisFromCompiler(uri, text, emptyCompilerFile(uri));
+}
+
+function emptyCompilerFile(uri: string): CompilerFile {
+  return {
+    uri,
+    diagnostics: [],
+    symbols: [],
+    includes: [],
+    definitions: [],
   };
 }
 
@@ -549,6 +169,10 @@ export function diagnosticRange(analysis: DocumentAnalysis, diagnostic: TorqueDi
 
 export function symbolRange(analysis: DocumentAnalysis, symbol: TorqueSymbol): Range {
   return rangeFromOffsets(analysis.lines, symbol.start, symbol.end);
+}
+
+export function definitionRange(analysis: DocumentAnalysis, definition: DefinitionMapping): Range {
+  return rangeFromOffsets(analysis.lines, definition.toStart, definition.toEnd);
 }
 
 export function identifierAt(analysis: DocumentAnalysis, offset: number): Token | undefined {
@@ -577,35 +201,45 @@ export function identifierAt(analysis: DocumentAnalysis, offset: number): Token 
   return undefined;
 }
 
+function definitionAt(analysis: DocumentAnalysis, offset: number): DefinitionMapping[] {
+  return analysis.definitions.filter((item) => offset >= item.fromStart && offset <= item.fromEnd);
+}
+
+function symbolAt(
+  analysis: DocumentAnalysis,
+  start: number,
+  end: number,
+): TorqueSymbol | undefined {
+  return analysis.symbols.find((symbol) => symbol.start === start && symbol.end === end);
+}
+
 export function resolveDefinition(
   analysis: DocumentAnalysis,
   offset: number,
   workspace: readonly DocumentAnalysis[],
 ): TorqueSymbol[] {
-  const token = identifierAt(analysis, offset);
-  if (token === undefined || token.kind === "string") {
-    return [];
-  }
-  const name = token.text;
-  const matches: TorqueSymbol[] = [];
-  for (const document of [analysis, ...workspace.filter((item) => item !== analysis)]) {
-    for (const symbol of document.symbols) {
-      if (symbol.name === name || symbol.name.endsWith(`::${name}`)) {
-        matches.push(symbol);
-      }
+  const hits = definitionAt(analysis, offset);
+  const resolved: TorqueSymbol[] = [];
+  for (const hit of hits) {
+    const target =
+      hit.toUri === analysis.uri
+        ? analysis
+        : (workspace.find((item) => item.uri === hit.toUri) ?? analysis);
+    const symbol = symbolAt(target, hit.toStart, hit.toEnd);
+    if (symbol !== undefined) {
+      resolved.push(symbol);
+      continue;
+    }
+    const named = target.symbols.find(
+      (candidate) =>
+        candidate.start === hit.toStart ||
+        (candidate.start <= hit.toStart && candidate.end >= hit.toEnd),
+    );
+    if (named !== undefined) {
+      resolved.push(named);
     }
   }
-  const local = matches.filter(
-    (symbol) => analysis.symbols.includes(symbol) && symbol.end <= token.start,
-  );
-  if (local.length > 0) {
-    return [local[local.length - 1]];
-  }
-  const sameFile = matches.filter((symbol) => analysis.symbols.includes(symbol));
-  if (sameFile.length > 0) {
-    return [sameFile[0]];
-  }
-  return matches.slice(0, 8);
+  return resolved;
 }
 
 export function includeAt(

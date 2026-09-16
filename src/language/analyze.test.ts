@@ -83,6 +83,61 @@ describe("resolveDefinition", () => {
     expect(symbol?.name).toBe("HeapNumberIs42");
     expect(symbol?.start).toBe(sample.indexOf("HeapNumberIs42"));
   });
+
+  test("reports type mismatches as compiler errors", () => {
+    const analysis = analyzeDocument(
+      `
+macro Wrong(x: Smi): String {
+  return x;
+}
+`.trim(),
+    );
+    expect(analysis.diagnostics.some((item) => item.message.includes("not assignable"))).toBe(true);
+  });
+
+  test("reports type-argument inference failures", () => {
+    const analysis = analyzeDocument(
+      `
+macro Pick<T: type>(x: T, y: T): T { return x; }
+macro Main(a: Smi, b: String): Smi {
+  return Pick(a, b);
+}
+`.trim(),
+    );
+    expect(analysis.diagnostics.some((item) => item.message.includes("conflicting types"))).toBe(
+      true,
+    );
+  });
+
+  test("reports uninferable generic calls as compiler errors", () => {
+    const analysis = analyzeDocument(
+      `
+macro Identity<T: type>(): T;
+macro Main(): Smi {
+  return Identity();
+}
+`.trim(),
+    );
+    expect(
+      analysis.diagnostics.some((item) =>
+        item.message.includes("failed to infer arguments for all type parameters"),
+      ),
+    ).toBe(true);
+  });
+
+  test("jumps from a local use to its declaration", () => {
+    const source = `
+macro Main(a: Smi): Smi {
+  let b: Smi = a;
+  return b;
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    const offset = source.lastIndexOf("b");
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.name).toBe("b");
+    expect(symbol?.start).toBe(source.indexOf("let b") + "let ".length);
+  });
 });
 
 describe("completionsFor", () => {

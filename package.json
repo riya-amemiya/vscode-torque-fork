@@ -2,7 +2,7 @@
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
   "version": "1.2.1",
-  "description": "Syntax highlighting, go-to-definition, completions, and syntax diagnostics for V8 Torque",
+  "description": "Syntax highlighting, go-to-definition, completions, and a WASM Torque compiler for V8 Torque",
   "categories": [
     "Programming Languages"
   ],
@@ -18,14 +18,17 @@
   "publisher": "riya-amemiya",
   "main": "./dist/extension.js",
   "scripts": {
-    "compile": "rolldown -c",
+    "build:wasm": "cargo build --release --target wasm32-unknown-unknown -p torque-compiler && bun scripts/copy-wasm.ts",
+    "bundle": "rolldown -c",
+    "compile": "bun run build:wasm && bun run bundle",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "lint": "oxlint",
     "package": "vsce package --no-dependencies",
     "test": "bun test src",
+    "test:compiler": "cargo test -p torque-compiler",
     "typecheck": "tsc --noEmit",
-    "vscode:prepublish": "rolldown -c --minify",
+    "vscode:prepublish": "bun run build:wasm && rolldown -c --minify",
     "watch": "rolldown -c --watch"
   },
   "dependencies": {

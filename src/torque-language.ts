@@ -33,6 +33,7 @@ import {
 } from "vscode";
 import {
   diagnosticRange,
+  definitionRange,
   includeAt,
   resolveDefinition,
   symbolRange,
@@ -113,6 +114,27 @@ function offsetOf(analysis: DocumentAnalysis, position: Position): number {
   });
 }
 
+function locationForDefinition(
+  store: TorqueWorkspace,
+  analysis: DocumentAnalysis,
+  offset: number,
+  fallback: Uri,
+): Location[] {
+  const hits = analysis.definitions.filter(
+    (item) => offset >= item.fromStart && offset <= item.fromEnd,
+  );
+  if (hits.length === 0) {
+    return [];
+  }
+  return hits.map((hit) => {
+    const target = store.get(hit.toUri) ?? analysis;
+    return new Location(
+      Uri.parse(hit.toUri || fallback.toString()),
+      vscodeRange(definitionRange(target, hit)),
+    );
+  });
+}
+
 function locationForSymbol(store: TorqueWorkspace, symbol: TorqueSymbol, fallback: Uri): Location {
   for (const [uri, analysis] of store.entries()) {
     if (analysis.symbols.includes(symbol)) {
@@ -123,7 +145,7 @@ function locationForSymbol(store: TorqueWorkspace, symbol: TorqueSymbol, fallbac
 }
 
 export function registerTorqueLanguage(context: ExtensionContext, store: TorqueWorkspace): void {
-  const diagnostics = languages.createDiagnosticCollection("torque-syntax");
+  const diagnostics = languages.createDiagnosticCollection("torque-compiler");
 
   const publish = (uri: Uri, analysis: DocumentAnalysis): void => {
     diagnostics.set(
@@ -134,17 +156,24 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
           item.message,
           DiagnosticSeverity.Error,
         );
-        diagnostic.source = "Torque";
+        diagnostic.source = "Torque Compiler";
         return diagnostic;
       }),
     );
+  };
+
+  const publishAll = (): void => {
+    for (const [uri, analysis] of store.entries()) {
+      publish(Uri.parse(uri), analysis);
+    }
   };
 
   const ingest = (document: TextDocument): void => {
     if (document.languageId !== "torque") {
       return;
     }
-    publish(document.uri, store.set(document.uri.toString(), document.getText()));
+    store.set(document.uri.toString(), document.getText());
+    publishAll();
   };
 
   for (const document of vsWorkspace.textDocuments) {
@@ -157,8 +186,10 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
         continue;
       }
       const bytes = await vsWorkspace.fs.readFile(file);
-      store.set(file.toString(), Buffer.from(bytes).toString("utf8"));
+      store.load(file.toString(), Buffer.from(bytes).toString("utf8"));
     }
+    store.rebuild();
+    publishAll();
   });
 
   context.subscriptions.push(
@@ -206,6 +237,10 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
           if (folder !== undefined) {
             return new Location(Uri.joinPath(folder.uri, include.path), new Position(0, 0));
           }
+        }
+        const mapped = locationForDefinition(store, analysis, offset, document.uri);
+        if (mapped.length > 0) {
+          return mapped;
         }
         const symbols = resolveDefinition(analysis, offset, store.all());
         if (symbols.length === 0) {

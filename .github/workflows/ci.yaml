@@ -19,6 +19,14 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
+      - name: Check format
+        run: cargo +nightly fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+      - run: cargo test -p torque-compiler
+      - run: bun run build:wasm
       - parallel:
           - name: Lint
             run: bun run lint
@@ -27,7 +35,7 @@ jobs:
           - name: Typecheck
             run: bun run typecheck
           - name: Compile
-            run: bun run compile
+            run: bun run bundle
           - name: Test
             run: bun test src
       - name: Package
@@ -36,5 +44,11 @@ jobs:
         run: |
           if unzip -Z1 ./*.vsix | grep -E '\.map$'; then
             echo "Source maps must not be packaged in the VSIX" >&2
+            exit 1
+          fi
+      - name: VSIX must contain the Torque WASM compiler
+        run: |
+          if ! unzip -Z1 ./*.vsix | grep -E 'torque_compiler\.wasm$'; then
+            echo "torque_compiler.wasm must be packaged in the VSIX" >&2
             exit 1
           fi

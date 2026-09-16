@@ -20,15 +20,23 @@ Opening a `.tq` file enables:
 - Syntax error markers for unmatched delimiters, unterminated strings, and malformed declarations
 - Hover documentation and the document outline
 
-These features come from a built-in language service modeled on the public
-[Torque user manual](https://v8.dev/docs/torque) and V8's `src/torque` grammar.
-They work without compiling V8.
+These features come from a built-in Torque compiler written in Rust and
+loaded as WebAssembly. It is modeled on the public
+[Torque user manual](https://v8.dev/docs/torque) and V8's `src/torque` compiler
+pipeline (parse, declaration binding, type inference, and code resolution).
+It works without compiling V8.
+
+The compiler reports errors when a build fails, including syntax errors,
+unresolved names, type mismatches, and generic type-argument inference
+failures. Go to definition uses the definition map recorded during that
+compile, the same way TypeScript jumps from a use to the declaration it
+resolved.
 
 ## Optional native language server
 
 The native `torque-language-server` is optional. When the executable is present
-it is started for compiler-accurate diagnostics; when it is missing the
-built-in editor features still work.
+it is started for V8-identical compiler diagnostics; when it is missing the
+built-in WASM compiler still provides diagnostics and go-to-definition.
 
 The language server is not built by default. To build it manually:
 
