@@ -194,6 +194,7 @@ impl Checker {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_symbol(
         &mut self,
         file: u32,
@@ -271,15 +272,15 @@ impl Checker {
             );
             self.types_by_name.insert((*name).to_string(), id);
         }
-        if self.lookup_value("True").is_none() {
-            if let Some(ty) = self.types_by_name.get("True").copied() {
-                self.insert_const("True", ty);
-            }
+        if self.lookup_value("True").is_none()
+            && let Some(ty) = self.types_by_name.get("True").copied()
+        {
+            self.insert_const("True", ty);
         }
-        if self.lookup_value("False").is_none() {
-            if let Some(ty) = self.types_by_name.get("False").copied() {
-                self.insert_const("False", ty);
-            }
+        if self.lookup_value("False").is_none()
+            && let Some(ty) = self.types_by_name.get("False").copied()
+        {
+            self.insert_const("False", ty);
         }
     }
 
@@ -1097,23 +1098,23 @@ impl Checker {
                 name,
                 generic_args,
             } => {
-                if namespace.is_empty() {
-                    if let Some(binding) = self.lookup_value(&name.name).cloned() {
-                        self.define(name.span, binding.span, binding.uri);
-                        return binding.ty;
-                    }
+                if namespace.is_empty()
+                    && let Some(binding) = self.lookup_value(&name.name).cloned()
+                {
+                    self.define(name.span, binding.span, binding.uri);
+                    return binding.ty;
                 }
                 let key = if namespace.is_empty() {
                     name.name.clone()
                 } else {
                     format!("{}::{}", namespace.join("::"), name.name)
                 };
-                if let Some(indices) = self.callables.get(&key).cloned() {
-                    if let Some(index) = indices.first() {
-                        let binding = self.bindings[*index].clone();
-                        self.define(name.span, binding.span, binding.uri);
-                        return binding.ty;
-                    }
+                if let Some(indices) = self.callables.get(&key).cloned()
+                    && let Some(index) = indices.first()
+                {
+                    let binding = self.bindings[*index].clone();
+                    self.define(name.span, binding.span, binding.uri);
+                    return binding.ty;
                 }
                 if let Some(id) = self.types_by_name.get(&name.name).copied() {
                     self.define(name.span, self.types.get(id).span, self.uri_for_type(id));
@@ -1131,10 +1132,10 @@ impl Checker {
                 self.error_ty
             }
             Expr::Int { .. } => {
-                if let Some(expected) = expected {
-                    if self.can_convert(self.int_lit_ty, expected) {
-                        return expected;
-                    }
+                if let Some(expected) = expected
+                    && self.can_convert(self.int_lit_ty, expected)
+                {
+                    return expected;
                 }
                 self.int_lit_ty
             }
@@ -1312,10 +1313,10 @@ impl Checker {
             }
         }
         let result = self.resolve_call(&name, name_span, &type_args, &raw_args, span);
-        if let Some(expected) = expected {
-            if self.can_convert(result, expected) {
-                return expected;
-            }
+        if let Some(expected) = expected
+            && self.can_convert(result, expected)
+        {
+            return expected;
         }
         result
     }
@@ -1355,14 +1356,13 @@ impl Checker {
             if binding.generic_params.len() == 1 && !type_args.is_empty() {
                 return type_args[0];
             }
-            if binding.name == "Cast"
+            if (binding.name == "Cast"
                 || binding.name == "Convert"
                 || binding.name == "UnsafeCast"
-                || binding.name == "FromConstexpr"
+                || binding.name == "FromConstexpr")
+                && let Some(ty) = type_args.first()
             {
-                if let Some(ty) = type_args.first() {
-                    return *ty;
-                }
+                return *ty;
             }
             return *ret;
         }
@@ -1405,17 +1405,17 @@ impl Checker {
                 if args.len() == 2
                     && !self.can_convert(args[0], args[1])
                     && !self.can_convert(args[1], args[0])
+                    && !self.types.is_error(args[0])
+                    && !self.types.is_error(args[1])
                 {
-                    if !self.types.is_error(args[0]) && !self.types.is_error(args[1]) {
-                        self.error(
-                            span,
-                            format!(
-                                "Cannot compare '{}' with '{}'",
-                                self.types.name_of(args[0]),
-                                self.types.name_of(args[1])
-                            ),
-                        );
-                    }
+                    self.error(
+                        span,
+                        format!(
+                            "Cannot compare '{}' with '{}'",
+                            self.types.name_of(args[0]),
+                            self.types.name_of(args[1])
+                        ),
+                    );
                 }
                 bool_ty
             }
@@ -1483,18 +1483,17 @@ impl Checker {
             if self.types.is_error(*arg) {
                 continue;
             }
-            if let Some(name) = self.types.generic_param_name(*param) {
-                if let Some(index) = candidate
+            if let Some(name) = self.types.generic_param_name(*param)
+                && let Some(index) = candidate
                     .generic_params
                     .iter()
                     .position(|item| item == name)
-                {
-                    match self.unify_inferred(&mut inferred[index], *arg) {
-                        Ok(()) => score += 1,
-                        Err(reason) => return CallMatch::InferFail(reason),
-                    }
-                    continue;
+            {
+                match self.unify_inferred(&mut inferred[index], *arg) {
+                    Ok(()) => score += 1,
+                    Err(reason) => return CallMatch::InferFail(reason),
                 }
+                continue;
             }
             if self.types.unwrap_alias(*arg) == self.types.unwrap_alias(*param) {
                 score += 2;
@@ -1523,9 +1522,9 @@ impl Checker {
                 Ok(())
             }
             Some(existing) => {
-                if self.types.unwrap_alias(existing) == self.types.unwrap_alias(incoming) {
-                    Ok(())
-                } else if self.can_convert(incoming, existing) {
+                if self.types.unwrap_alias(existing) == self.types.unwrap_alias(incoming)
+                    || self.can_convert(incoming, existing)
+                {
                     Ok(())
                 } else if self.can_convert(existing, incoming) {
                     *slot = Some(incoming);
@@ -1543,16 +1542,14 @@ impl Checker {
         candidate: &Binding,
         inferred: &[Option<TypeId>],
     ) -> TypeId {
-        if let Some(name) = self.types.generic_param_name(ty) {
-            if let Some(index) = candidate
+        if let Some(name) = self.types.generic_param_name(ty)
+            && let Some(index) = candidate
                 .generic_params
                 .iter()
                 .position(|item| item == name)
-            {
-                if let Some(found) = inferred.get(index).copied().flatten() {
-                    return found;
-                }
-            }
+            && let Some(found) = inferred.get(index).copied().flatten()
+        {
+            return found;
         }
         ty
     }

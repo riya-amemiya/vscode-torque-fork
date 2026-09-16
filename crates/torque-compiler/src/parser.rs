@@ -69,6 +69,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn comma_separated<T>(&mut self, mut parse_item: impl FnMut(&mut Self) -> Option<T>) -> Vec<T> {
+        let mut items = Vec::new();
+        while let Some(item) = parse_item(self) {
+            items.push(item);
+            if !self.eat(",") {
+                break;
+            }
+        }
+        items
+    }
+
     fn expect(&mut self, text: &str) -> Option<&'a Token> {
         if self.at(text) {
             self.take()
@@ -152,19 +163,11 @@ impl<'a> Parser<'a> {
         if !self.eat("<") {
             return Vec::new();
         }
-        let mut args = Vec::new();
-        if !self.at(">") {
-            loop {
-                if let Some(ty) = self.parse_type() {
-                    args.push(ty);
-                } else {
-                    break;
-                }
-                if !self.eat(",") {
-                    break;
-                }
-            }
-        }
+        let args = if self.at(">") {
+            Vec::new()
+        } else {
+            self.comma_separated(Self::parse_type)
+        };
         self.expect(">");
         args
     }
@@ -173,25 +176,20 @@ impl<'a> Parser<'a> {
         if !self.eat("<") {
             return Vec::new();
         }
-        let mut params = Vec::new();
-        if !self.at(">") {
-            loop {
-                if let Some(name) = self.parse_name() {
-                    if self.eat(":") {
-                        self.eat("type");
-                    }
-                    if self.eat("extends") {
-                        let _ = self.parse_type();
-                    }
-                    params.push(name);
-                } else {
-                    break;
+        let params = if self.at(">") {
+            Vec::new()
+        } else {
+            self.comma_separated(|parser| {
+                let name = parser.parse_name()?;
+                if parser.eat(":") {
+                    parser.eat("type");
                 }
-                if !self.eat(",") {
-                    break;
+                if parser.eat("extends") {
+                    let _ = parser.parse_type();
                 }
-            }
-        }
+                Some(name)
+            })
+        };
         self.expect(">");
         params
     }
@@ -231,19 +229,11 @@ impl<'a> Parser<'a> {
         if self.at("builtin") {
             let start = self.take().unwrap();
             self.expect("(");
-            let mut params = Vec::new();
-            if !self.at(")") {
-                loop {
-                    if let Some(ty) = self.parse_type() {
-                        params.push(ty);
-                    } else {
-                        break;
-                    }
-                    if !self.eat(",") {
-                        break;
-                    }
-                }
-            }
+            let params = if self.at(")") {
+                Vec::new()
+            } else {
+                self.comma_separated(Self::parse_type)
+            };
             self.expect(")");
             self.expect("=>");
             let result = self
@@ -363,16 +353,7 @@ impl<'a> Parser<'a> {
         ) {
             list.implicit_kind = self.take().map(|t| t.text.clone());
             if !self.at(")") {
-                loop {
-                    if let Some(param) = self.parse_name_and_type() {
-                        list.implicit.push(param);
-                    } else {
-                        break;
-                    }
-                    if !self.eat(",") {
-                        break;
-                    }
-                }
+                list.implicit = self.comma_separated(Self::parse_name_and_type);
             }
             self.expect(")");
             if self.at("(") {
@@ -433,24 +414,18 @@ impl<'a> Parser<'a> {
             return Vec::new();
         }
         let mut labels = Vec::new();
-        loop {
-            let Some(name) = self.parse_name() else { break };
-            let mut types = Vec::new();
-            if self.eat("(") {
-                if !self.at(")") {
-                    loop {
-                        if let Some(ty) = self.parse_type() {
-                            types.push(ty);
-                        } else {
-                            break;
-                        }
-                        if !self.eat(",") {
-                            break;
-                        }
-                    }
-                }
+        while let Some(name) = self.parse_name() {
+            let types = if self.eat("(") {
+                let types = if self.at(")") {
+                    Vec::new()
+                } else {
+                    self.comma_separated(Self::parse_type)
+                };
                 self.expect(")");
-            }
+                types
+            } else {
+                Vec::new()
+            };
             labels.push(LabelParam { name, types });
             if !self.eat(",") {
                 break;
@@ -463,18 +438,7 @@ impl<'a> Parser<'a> {
         if !self.eat("otherwise") {
             return Vec::new();
         }
-        let mut items = Vec::new();
-        loop {
-            if let Some(expr) = self.parse_atom_expr_or_debug() {
-                items.push(expr);
-            } else {
-                break;
-            }
-            if !self.eat(",") {
-                break;
-            }
-        }
-        items
+        self.comma_separated(Self::parse_atom_expr_or_debug)
     }
 
     fn parse_atom_expr_or_debug(&mut self) -> Option<Expr> {
@@ -498,16 +462,7 @@ impl<'a> Parser<'a> {
             return args;
         }
         if !self.at(")") {
-            loop {
-                if let Some(expr) = self.parse_expression() {
-                    args.push(expr);
-                } else {
-                    break;
-                }
-                if !self.eat(",") {
-                    break;
-                }
-            }
+            args = self.comma_separated(Self::parse_expression);
         }
         self.expect(")");
         args
@@ -627,14 +582,14 @@ impl<'a> Parser<'a> {
         }
         while !self.at("}") && self.peek().is_some() {
             let saved = self.index;
-            if let Some(name) = self.parse_name() {
-                if self.eat(":") {
-                    if let Some(expr) = self.parse_expression() {
-                        fields.push((Some(name), expr));
-                    }
-                    self.eat(",");
-                    continue;
+            if let Some(name) = self.parse_name()
+                && self.eat(":")
+            {
+                if let Some(expr) = self.parse_expression() {
+                    fields.push((Some(name), expr));
                 }
+                self.eat(",");
+                continue;
             }
             self.index = saved;
             if let Some(expr) = self.parse_expression() {
@@ -778,10 +733,7 @@ impl<'a> Parser<'a> {
 
     fn parse_binary(&mut self, min_prec: u8) -> Option<Expr> {
         let mut left = self.parse_unary()?;
-        loop {
-            let Some((op, prec, logical)) = self.peek().and_then(|t| binary_prec(&t.text)) else {
-                break;
-            };
+        while let Some((op, prec, logical)) = self.peek().and_then(|t| binary_prec(&t.text)) {
             if prec < min_prec {
                 break;
             }
@@ -829,27 +781,25 @@ impl<'a> Parser<'a> {
 
     fn parse_expression(&mut self) -> Option<Expr> {
         let left = self.parse_binary(1)?;
-        if let Some(op) = self.peek().map(|t| t.text.clone()) {
-            if is_assign_op(&op) {
-                self.take();
-                let value = self.parse_expression()?;
-                let span = left.span().merge(value.span());
-                return Some(Expr::Assign {
-                    target: Box::new(left),
-                    op: if op == "=" { None } else { Some(op) },
-                    value: Box::new(value),
-                    span,
-                });
-            }
+        if let Some(op) = self.peek().map(|t| t.text.clone())
+            && is_assign_op(&op)
+        {
+            self.take();
+            let value = self.parse_expression()?;
+            let span = left.span().merge(value.span());
+            return Some(Expr::Assign {
+                target: Box::new(left),
+                op: if op == "=" { None } else { Some(op) },
+                value: Box::new(value),
+                span,
+            });
         }
         Some(left)
     }
 
     fn parse_block(&mut self) -> Option<Stmt> {
         let deferred = self.eat("deferred");
-        let Some(open) = self.expect("{") else {
-            return None;
-        };
+        let open = self.expect("{")?;
         let mut statements = Vec::new();
         while !self.at("}") && self.peek().is_some() {
             if let Some(stmt) = self.parse_statement() {
@@ -1160,6 +1110,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn parse_callable_after_kind(
         &mut self,
         annotations: Vec<Annotation>,
@@ -1250,9 +1201,7 @@ impl<'a> Parser<'a> {
         }
         if self.at_kind(TokenKind::Import) {
             self.take();
-            let Some((path, span)) = self.parse_string_value() else {
-                return None;
-            };
+            let (path, span) = self.parse_string_value()?;
             return Some(Decl::Include { path, span });
         }
         if self.at("namespace") {
@@ -1340,8 +1289,8 @@ impl<'a> Parser<'a> {
                     if self.at("transitioning") || self.at("macro") || self.at("operator") {
                         let t = self.eat("transitioning");
                         let op = self.parse_operator_name();
-                        if self.eat("macro") {
-                            if let Some(Decl::Callable(method)) = self.parse_callable_after_kind(
+                        if self.eat("macro")
+                            && let Some(Decl::Callable(method)) = self.parse_callable_after_kind(
                                 inner_ann,
                                 t,
                                 false,
@@ -1349,10 +1298,10 @@ impl<'a> Parser<'a> {
                                 op,
                                 CallableKind::Macro,
                                 name.span,
-                            ) {
-                                methods.push(method);
-                                continue;
-                            }
+                            )
+                        {
+                            methods.push(method);
+                            continue;
                         }
                     }
                     if let Some(field) = self.parse_field(false) {
@@ -1393,8 +1342,8 @@ impl<'a> Parser<'a> {
                 if self.at("macro") || self.at("transitioning") || self.at("operator") {
                     let t = self.eat("transitioning");
                     let op = self.parse_operator_name();
-                    if self.eat("macro") {
-                        if let Some(Decl::Callable(method)) = self.parse_callable_after_kind(
+                    if self.eat("macro")
+                        && let Some(Decl::Callable(method)) = self.parse_callable_after_kind(
                             inner_ann,
                             t,
                             false,
@@ -1402,10 +1351,10 @@ impl<'a> Parser<'a> {
                             op,
                             CallableKind::Macro,
                             name.span,
-                        ) {
-                            methods.push(method);
-                            continue;
-                        }
+                        )
+                    {
+                        methods.push(method);
+                        continue;
                     }
                 }
                 if let Some(field) = self.parse_field(false) {
@@ -1606,18 +1555,17 @@ impl<'a> Parser<'a> {
         while self.peek().is_some() {
             if let Some(decl) = self.parse_declaration() {
                 decls.push(decl);
-            } else if self.peek().is_some() {
-                if let Some(token) = self.take() {
-                    if token.kind == TokenKind::Error {
-                        self.diagnostics.push(Diagnostic::error(
-                            self.span_of(token),
-                            token
-                                .message
-                                .clone()
-                                .unwrap_or_else(|| "Invalid syntax".into()),
-                        ));
-                    }
-                }
+            } else if self.peek().is_some()
+                && let Some(token) = self.take()
+                && token.kind == TokenKind::Error
+            {
+                self.diagnostics.push(Diagnostic::error(
+                    self.span_of(token),
+                    token
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "Invalid syntax".into()),
+                ));
             }
         }
         decls

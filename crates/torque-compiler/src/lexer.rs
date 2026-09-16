@@ -322,7 +322,7 @@ pub fn delimiter_errors(tokens: &[Token]) -> Vec<(usize, usize, String)> {
             "{" => Some("}"),
             _ => None,
         };
-        if let Some(_) = closer {
+        if closer.is_some() {
             stack.push(token);
             continue;
         }

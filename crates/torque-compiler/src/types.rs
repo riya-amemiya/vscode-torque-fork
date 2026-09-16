@@ -86,10 +86,9 @@ impl TypeStore {
                 if let TypeKind::Union {
                     members: existing_members,
                 } = &existing.kind
+                    && *existing_members == members
                 {
-                    if *existing_members == members {
-                        return TypeId(index as u32);
-                    }
+                    return TypeId(index as u32);
                 }
             }
             self.types.push(TypeData {
