@@ -50,6 +50,20 @@ describe("analyzeDocument", () => {
     expect(analysis.diagnostics.some((item) => item.message === "Expected macro name")).toBe(true);
   });
 
+  test("does not treat runtime:: calls as runtime declarations", () => {
+    const source = `
+transitioning macro ArrayIsArray_Inline(
+    implicit context: Context)(element: JSAny): Boolean {
+  return Cast<Boolean>(runtime::ArrayIsArray(element)) otherwise unreachable;
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    expect(analysis.diagnostics.map((item) => item.message)).not.toContain("Expected runtime name");
+    expect(analysis.symbols.map((symbol) => `${symbol.kind}:${symbol.name}`)).toContain(
+      "macro:ArrayIsArray_Inline",
+    );
+  });
+
   test("records #include paths", () => {
     const analysis = analyzeDocument('#include "src/objects/js-proxy.h"\n');
     expect(analysis.includes).toEqual([
