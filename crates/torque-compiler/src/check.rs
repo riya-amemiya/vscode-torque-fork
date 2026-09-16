@@ -259,6 +259,7 @@ impl Checker {
                 "String" | "Oddball" | "Map" | "Name" => {
                     self.types_by_name.get("HeapObject").copied()
                 }
+                "Null" | "Undefined" => self.types_by_name.get("Oddball").copied(),
                 "NativeContext" => self.types_by_name.get("Context").copied(),
                 _ => None,
             };
@@ -272,15 +273,12 @@ impl Checker {
             );
             self.types_by_name.insert((*name).to_string(), id);
         }
-        if self.lookup_value("True").is_none()
-            && let Some(ty) = self.types_by_name.get("True").copied()
-        {
-            self.insert_const("True", ty);
-        }
-        if self.lookup_value("False").is_none()
-            && let Some(ty) = self.types_by_name.get("False").copied()
-        {
-            self.insert_const("False", ty);
+        for name in ["True", "False", "Null", "Undefined"] {
+            if self.lookup_value(name).is_none()
+                && let Some(ty) = self.types_by_name.get(name).copied()
+            {
+                self.insert_const(name, ty);
+            }
         }
     }
 
@@ -647,6 +645,20 @@ impl Checker {
                             container: Some(name.name.clone()),
                             detail: None,
                         });
+                        self.insert_value(Binding {
+                            name: format!("{}::{}", name.name, ident.name),
+                            kind: "const".into(),
+                            span: ident.span,
+                            uri: self.uri(ident.span.file),
+                            ty,
+                            operator_name: None,
+                            generic_params: Vec::new(),
+                            param_types: Vec::new(),
+                            return_type: ty,
+                            implicit_count: 0,
+                            container: Some(name.name.clone()),
+                            detail: None,
+                        });
                         self.push_symbol(
                             ident.span.file,
                             ident.name.clone(),
@@ -772,15 +784,17 @@ impl Checker {
                     }
                     let _ = name;
                 }
-                Decl::Callable(callable) => self.check_callable(callable),
-                Decl::Class { methods, .. } => {
+                Decl::Callable(callable) => self.check_callable(callable, None),
+                Decl::Class { name, methods, .. } => {
+                    let this_ty = self.types_by_name.get(&name.name).copied();
                     for method in methods {
-                        self.check_callable(method);
+                        self.check_callable(method, this_ty);
                     }
                 }
-                Decl::Struct { methods, .. } => {
+                Decl::Struct { name, methods, .. } => {
+                    let this_ty = self.types_by_name.get(&name.name).copied();
                     for method in methods {
-                        self.check_callable(method);
+                        self.check_callable(method, this_ty);
                     }
                 }
                 _ => {}
@@ -788,9 +802,25 @@ impl Checker {
         }
     }
 
-    fn check_callable(&mut self, callable: &CallableDecl) {
+    fn check_callable(&mut self, callable: &CallableDecl, this_ty: Option<TypeId>) {
         self.push_scope();
         let saved_generics = self.push_generic_params(&callable.generic_params);
+        if let Some(ty) = this_ty {
+            self.insert_value(Binding {
+                name: "this".into(),
+                kind: "const".into(),
+                span: callable.name.span,
+                uri: self.uri(callable.name.span.file),
+                ty,
+                operator_name: None,
+                generic_params: Vec::new(),
+                param_types: Vec::new(),
+                return_type: ty,
+                implicit_count: 0,
+                container: Some(callable.name.name.clone()),
+                detail: None,
+            });
+        }
         for param in callable
             .params
             .implicit
@@ -836,6 +866,27 @@ impl Checker {
                 implicit_count: 0,
                 container: Some(callable.name.name.clone()),
                 detail: Some("label".into()),
+            });
+        }
+        if let Some(rest) = &callable.params.rest {
+            let ty = self
+                .types_by_name
+                .get("JSAny")
+                .copied()
+                .unwrap_or(self.error_ty);
+            self.insert_value(Binding {
+                name: rest.name.clone(),
+                kind: "const".into(),
+                span: rest.span,
+                uri: self.uri(rest.span.file),
+                ty,
+                operator_name: None,
+                generic_params: Vec::new(),
+                param_types: Vec::new(),
+                return_type: ty,
+                implicit_count: 0,
+                container: Some(callable.name.name.clone()),
+                detail: Some("arguments".into()),
             });
         }
         self.current_return = callable
@@ -942,7 +993,6 @@ impl Checker {
                     (None, Some(init)) => {
                         let found = self.check_expr(init, None);
                         if self.types.is_error(found) {
-                            self.error(*span, format!("Cannot infer type of '{}'", name.name));
                             self.error_ty
                         } else {
                             found
@@ -1011,11 +1061,10 @@ impl Checker {
                 }
             }
             Stmt::Try { body, handlers, .. } => {
-                self.check_stmt(body);
+                self.push_scope();
                 for handler in handlers {
                     match handler {
-                        TryHandler::Label { name, params, body } => {
-                            self.push_scope();
+                        TryHandler::Label { name, .. } => {
                             self.insert_value(Binding {
                                 name: name.name.clone(),
                                 kind: "const".into(),
@@ -1030,6 +1079,16 @@ impl Checker {
                                 container: None,
                                 detail: Some("label".into()),
                             });
+                        }
+                        TryHandler::Catch { .. } => {}
+                    }
+                }
+                self.check_stmt(body);
+                for handler in handlers {
+                    match handler {
+                        TryHandler::Label { name, params, body } => {
+                            self.push_scope();
+                            self.define(name.span, name.span, self.uri(name.span.file));
                             for param in &params.named {
                                 let ty = self.resolve_type_expr(&param.ty);
                                 self.insert_value(Binding {
@@ -1073,6 +1132,7 @@ impl Checker {
                         }
                     }
                 }
+                self.pop_scope();
             }
             Stmt::Goto { label, args } => {
                 if let Some(binding) = self.lookup_value(&label.name).cloned() {
@@ -1098,23 +1158,36 @@ impl Checker {
                 name,
                 generic_args,
             } => {
-                if namespace.is_empty()
-                    && let Some(binding) = self.lookup_value(&name.name).cloned()
-                {
-                    self.define(name.span, binding.span, binding.uri);
-                    return binding.ty;
-                }
                 let key = if namespace.is_empty() {
                     name.name.clone()
                 } else {
                     format!("{}::{}", namespace.join("::"), name.name)
                 };
+                if let Some(binding) = self
+                    .lookup_value(&key)
+                    .cloned()
+                    .or_else(|| self.lookup_value(&name.name).cloned())
+                {
+                    self.define(name.span, binding.span, binding.uri);
+                    return binding.ty;
+                }
                 if let Some(indices) = self.callables.get(&key).cloned()
                     && let Some(index) = indices.first()
                 {
                     let binding = self.bindings[*index].clone();
                     self.define(name.span, binding.span, binding.uri);
                     return binding.ty;
+                }
+                if !namespace.is_empty()
+                    && let Some(ty_id) = self.types_by_name.get(namespace.last().unwrap()).copied()
+                {
+                    self.define(
+                        name.span,
+                        self.types.get(ty_id).span,
+                        self.uri_for_type(ty_id),
+                    );
+                    let _ = generic_args;
+                    return ty_id;
                 }
                 if let Some(id) = self.types_by_name.get(&name.name).copied() {
                     self.define(name.span, self.types.get(id).span, self.uri_for_type(id));
@@ -1159,14 +1232,17 @@ impl Checker {
                 span,
             } => {
                 let recv = self.check_expr(target, None);
-                let mut arg_types: Vec<TypeId> = vec![recv];
-                for arg in args {
-                    arg_types.push(self.check_expr(arg, None));
+                let arg_types: Vec<TypeId> =
+                    args.iter().map(|arg| self.check_expr(arg, None)).collect();
+                self.check_otherwise(otherwise);
+                if let Some(ret) =
+                    self.try_resolve_call(&method.name, method.span, &[], &arg_types, *span)
+                {
+                    return ret;
                 }
-                for item in otherwise {
-                    let _ = self.check_expr(item, None);
-                }
-                self.resolve_call(&method.name, method.span, &[], &arg_types, *span)
+                let mut ufcs = vec![recv];
+                ufcs.extend_from_slice(&arg_types);
+                self.resolve_call(&method.name, method.span, &[], &ufcs, *span)
             }
             Expr::IntrinsicCall {
                 name,
@@ -1189,47 +1265,18 @@ impl Checker {
                 );
                 self.error_ty
             }
-            Expr::Field { object, field, .. } => {
-                let recv = self.check_expr(object, None);
-                if let Some(found) = self
-                    .types
-                    .fields_of(recv)
-                    .into_iter()
-                    .find(|f| f.name == field.name)
-                {
-                    self.define(field.span, found.span, self.uri(found.span.file));
-                    return found.ty;
-                }
-                self.error(
-                    field.span,
-                    format!(
-                        "Type '{}' has no field '{}'",
-                        self.types.name_of(recv),
-                        field.name
-                    ),
-                );
-                self.error_ty
-            }
-            Expr::Index { object, index, .. } => {
-                let recv = self.check_expr(object, None);
-                let _ = self.check_expr(index, None);
-                recv
-            }
-            Expr::Assign { target, value, .. } => {
-                let target_ty = self.check_expr(target, None);
-                let found = self.check_expr(value, Some(target_ty));
-                if !self.can_convert(found, target_ty) {
-                    self.error(
-                        value.span(),
-                        format!(
-                            "Type '{}' is not assignable to '{}'",
-                            self.types.name_of(found),
-                            self.types.name_of(target_ty)
-                        ),
-                    );
-                }
-                target_ty
-            }
+            Expr::Field { object, field, .. } => self.check_field(object, field),
+            Expr::Index {
+                object,
+                index,
+                span,
+            } => self.check_index(object, index, *span),
+            Expr::Assign {
+                target,
+                value,
+                span,
+                ..
+            } => self.check_assign(target, value, *span),
             Expr::Conditional {
                 cond,
                 then_e,
@@ -1267,7 +1314,7 @@ impl Checker {
         &mut self,
         callee: &Expr,
         args: &[Expr],
-        otherwise: &[Expr],
+        otherwise: &[Stmt],
         span: Span,
         expected: Option<TypeId>,
     ) -> TypeId {
@@ -1300,18 +1347,7 @@ impl Checker {
         for arg in args {
             raw_args.push(self.check_expr(arg, None));
         }
-        for item in otherwise {
-            match item {
-                Expr::Ident { name, .. } => {
-                    if let Some(binding) = self.lookup_value(&name.name).cloned() {
-                        self.define(name.span, binding.span, binding.uri);
-                    }
-                }
-                _ => {
-                    let _ = self.check_expr(item, None);
-                }
-            }
-        }
+        self.check_otherwise(otherwise);
         let result = self.resolve_call(&name, name_span, &type_args, &raw_args, span);
         if let Some(expected) = expected
             && self.can_convert(result, expected)
@@ -1319,6 +1355,143 @@ impl Checker {
             return expected;
         }
         result
+    }
+
+    fn check_otherwise(&mut self, otherwise: &[Stmt]) {
+        for stmt in otherwise {
+            if let Stmt::Expr(Expr::Ident {
+                name, namespace, ..
+            }) = stmt
+                && namespace.is_empty()
+            {
+                if let Some(binding) = self.lookup_value(&name.name).cloned() {
+                    self.define(name.span, binding.span, binding.uri);
+                } else {
+                    self.error(name.span, format!("Cannot resolve '{}'", name.name));
+                }
+                continue;
+            }
+            self.check_stmt(stmt);
+        }
+    }
+
+    fn check_field(&mut self, object: &Expr, field: &Ident) -> TypeId {
+        let recv = self.check_expr(object, None);
+        if self.types.is_error(recv) {
+            return self.error_ty;
+        }
+        if let Some(found) = self
+            .types
+            .fields_of(recv)
+            .into_iter()
+            .find(|item| item.name == field.name)
+        {
+            self.define(field.span, found.span, self.uri(found.span.file));
+            return found.ty;
+        }
+        let dotted = format!(".{}", field.name);
+        if let Some(ret) = self.try_resolve_call(&dotted, field.span, &[], &[recv], field.span) {
+            return ret;
+        }
+        if let Some(ret) = self.try_resolve_call(&field.name, field.span, &[], &[], field.span) {
+            return ret;
+        }
+        if let Some(ret) = self.try_resolve_call(&field.name, field.span, &[], &[recv], field.span)
+        {
+            return ret;
+        }
+        self.error(
+            field.span,
+            format!(
+                "Type '{}' has no field '{}'",
+                self.types.name_of(recv),
+                field.name
+            ),
+        );
+        self.error_ty
+    }
+
+    fn check_index(&mut self, object: &Expr, index: &Expr, span: Span) -> TypeId {
+        let idx = self.check_expr(index, None);
+        if let Expr::Field {
+            object: inner,
+            field,
+            ..
+        } = object
+        {
+            let recv = self.check_expr(inner, None);
+            if self.types.is_error(recv) {
+                return self.error_ty;
+            }
+            let op = format!(".{}[]", field.name);
+            if let Some(ret) = self.try_resolve_call(&op, field.span, &[], &[recv, idx], span) {
+                return ret;
+            }
+            if let Some(found) = self
+                .types
+                .fields_of(recv)
+                .into_iter()
+                .find(|item| item.name == field.name)
+            {
+                self.define(field.span, found.span, self.uri(found.span.file));
+                return found.ty;
+            }
+            self.error(
+                field.span,
+                format!(
+                    "Type '{}' has no field '{}'",
+                    self.types.name_of(recv),
+                    field.name
+                ),
+            );
+            return self.error_ty;
+        }
+        let recv = self.check_expr(object, None);
+        if let Some(ret) = self.try_resolve_call("[]", span, &[], &[recv, idx], span) {
+            return ret;
+        }
+        recv
+    }
+
+    fn check_assign(&mut self, target: &Expr, value: &Expr, _span: Span) -> TypeId {
+        if let Expr::Index {
+            object,
+            index,
+            span: index_span,
+        } = target
+            && let Expr::Field {
+                object: inner,
+                field,
+                ..
+            } = object.as_ref()
+        {
+            let recv = self.check_expr(inner, None);
+            let idx = self.check_expr(index, None);
+            let found = self.check_expr(value, None);
+            if self.types.is_error(recv) {
+                return found;
+            }
+            let op = format!(".{}[]=", field.name);
+            if self
+                .try_resolve_call(&op, field.span, &[], &[recv, idx, found], *index_span)
+                .is_some()
+            {
+                return found;
+            }
+        }
+        let target_ty = self.check_expr(target, None);
+        let found = self.check_expr(value, Some(target_ty));
+        if !self.can_convert(found, target_ty) {
+            self.error(
+                value.span(),
+                format!(
+                    "Type '{}' is not assignable to '{}'",
+                    self.types.name_of(found),
+                    self.types.name_of(target_ty)
+                ),
+            );
+        }
+        target_ty
     }
 
     fn resolve_call(
@@ -1329,43 +1502,10 @@ impl Checker {
         arg_types: &[TypeId],
         span: Span,
     ) -> TypeId {
+        if let Some(ret) = self.try_resolve_call(name, name_span, type_args, arg_types, span) {
+            return ret;
+        }
         let short = name.rsplit("::").next().unwrap_or(name);
-        let mut candidates: Vec<Binding> = Vec::new();
-        if let Some(indices) = self.callables.get(short).cloned() {
-            for index in indices {
-                candidates.push(self.bindings[index].clone());
-            }
-        }
-        if let Some(indices) = self.callables.get(name).cloned() {
-            for index in indices {
-                candidates.push(self.bindings[index].clone());
-            }
-        }
-        let mut inference_failure: Option<String> = None;
-        let mut matched: Vec<(Binding, TypeId, i32)> = Vec::new();
-        for candidate in candidates {
-            match self.match_candidate(&candidate, type_args, arg_types) {
-                CallMatch::Match { ret, score } => matched.push((candidate, ret, score)),
-                CallMatch::Skip => {}
-                CallMatch::InferFail(reason) => inference_failure = Some(reason),
-            }
-        }
-        matched.sort_by_key(|item| -item.2);
-        if let Some((binding, ret, _)) = matched.first() {
-            self.define(name_span, binding.span, binding.uri.clone());
-            if binding.generic_params.len() == 1 && !type_args.is_empty() {
-                return type_args[0];
-            }
-            if (binding.name == "Cast"
-                || binding.name == "Convert"
-                || binding.name == "UnsafeCast"
-                || binding.name == "FromConstexpr")
-                && let Some(ty) = type_args.first()
-            {
-                return *ty;
-            }
-            return *ret;
-        }
         if matches!(short, "Cast" | "Convert" | "UnsafeCast" | "FromConstexpr") {
             if let Some(ty) = type_args.first() {
                 return *ty;
@@ -1379,7 +1519,7 @@ impl Checker {
         if is_operator(short) {
             return self.builtin_operator(short, arg_types, span);
         }
-        if let Some(reason) = inference_failure {
+        if let Some(reason) = self.inference_failure(name, type_args, arg_types) {
             self.error(name_span, format!("{reason} for '{short}'"));
             return self.error_ty;
         }
@@ -1394,6 +1534,74 @@ impl Checker {
         self.error_ty
     }
 
+    fn try_resolve_call(
+        &mut self,
+        name: &str,
+        name_span: Span,
+        type_args: &[TypeId],
+        arg_types: &[TypeId],
+        _span: Span,
+    ) -> Option<TypeId> {
+        let (matched, _) = self.collect_matches(name, type_args, arg_types);
+        let (binding, ret, _) = matched.first()?;
+        self.define(name_span, binding.span, binding.uri.clone());
+        if binding.generic_params.len() == 1 && !type_args.is_empty() {
+            return Some(type_args[0]);
+        }
+        if (binding.name == "Cast"
+            || binding.name == "Convert"
+            || binding.name == "UnsafeCast"
+            || binding.name == "FromConstexpr")
+            && let Some(ty) = type_args.first()
+        {
+            return Some(*ty);
+        }
+        Some(*ret)
+    }
+
+    fn inference_failure(
+        &self,
+        name: &str,
+        type_args: &[TypeId],
+        arg_types: &[TypeId],
+    ) -> Option<String> {
+        let (_, failure) = self.collect_matches(name, type_args, arg_types);
+        failure
+    }
+
+    fn collect_matches(
+        &self,
+        name: &str,
+        type_args: &[TypeId],
+        arg_types: &[TypeId],
+    ) -> (Vec<(Binding, TypeId, i32)>, Option<String>) {
+        let short = name.rsplit("::").next().unwrap_or(name);
+        let mut candidates: Vec<Binding> = Vec::new();
+        if let Some(indices) = self.callables.get(short).cloned() {
+            for index in indices {
+                candidates.push(self.bindings[index].clone());
+            }
+        }
+        if name != short
+            && let Some(indices) = self.callables.get(name).cloned()
+        {
+            for index in indices {
+                candidates.push(self.bindings[index].clone());
+            }
+        }
+        let mut inference_failure: Option<String> = None;
+        let mut matched: Vec<(Binding, TypeId, i32)> = Vec::new();
+        for candidate in candidates {
+            match self.match_candidate(&candidate, type_args, arg_types) {
+                CallMatch::Match { ret, score } => matched.push((candidate, ret, score)),
+                CallMatch::Skip => {}
+                CallMatch::InferFail(reason) => inference_failure = Some(reason),
+            }
+        }
+        matched.sort_by_key(|item| -item.2);
+        (matched, inference_failure)
+    }
+
     fn builtin_operator(&mut self, op: &str, args: &[TypeId], span: Span) -> TypeId {
         let bool_ty = self
             .types_by_name
@@ -1403,8 +1611,7 @@ impl Checker {
         match op {
             "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                 if args.len() == 2
-                    && !self.can_convert(args[0], args[1])
-                    && !self.can_convert(args[1], args[0])
+                    && !self.comparable(args[0], args[1])
                     && !self.types.is_error(args[0])
                     && !self.types.is_error(args[1])
                 {
@@ -1462,12 +1669,28 @@ impl Checker {
         if candidate.generic_params.is_empty() && !type_args.is_empty() {
             return CallMatch::Skip;
         }
-        let params = if candidate.implicit_count <= candidate.param_types.len() {
+        let without_implicit = if candidate.implicit_count <= candidate.param_types.len() {
             &candidate.param_types[candidate.implicit_count..]
         } else {
-            &candidate.param_types
+            &candidate.param_types[..]
         };
-        if arg_types.len() > params.len() {
+        let mut best = self.match_params(candidate, type_args, without_implicit, arg_types);
+        if candidate.implicit_count > 0 {
+            let with_implicit =
+                self.match_params(candidate, type_args, &candidate.param_types, arg_types);
+            best = prefer_match(best, with_implicit);
+        }
+        best
+    }
+
+    fn match_params(
+        &self,
+        candidate: &Binding,
+        type_args: &[TypeId],
+        params: &[TypeId],
+        arg_types: &[TypeId],
+    ) -> CallMatch {
+        if arg_types.len() != params.len() {
             return CallMatch::Skip;
         }
         let mut inferred: Vec<Option<TypeId>> = vec![None; candidate.generic_params.len()];
@@ -1564,7 +1787,84 @@ impl Checker {
         if self.types.is_integer_literal(from) && self.types.name_of(to).contains("bool") {
             return false;
         }
+        if self.is_jsany(to) && self.js_value_like(from) {
+            return true;
+        }
         false
+    }
+
+    fn comparable(&self, left: TypeId, right: TypeId) -> bool {
+        self.can_convert(left, right)
+            || self.can_convert(right, left)
+            || (self.types.numeric_like(left) && self.types.numeric_like(right))
+            || (self.js_value_like(left) && self.js_value_like(right))
+    }
+
+    fn is_jsany(&self, id: TypeId) -> bool {
+        self.types.name_of(id) == "JSAny"
+    }
+
+    fn js_value_like(&self, id: TypeId) -> bool {
+        if self.types.is_error(id) {
+            return true;
+        }
+        let name = self.types.name_of(id);
+        const NAMES: &[&str] = &[
+            "JSAny",
+            "Object",
+            "HeapObject",
+            "JSReceiver",
+            "JSObject",
+            "JSArray",
+            "Smi",
+            "String",
+            "Boolean",
+            "Oddball",
+            "Null",
+            "Undefined",
+            "True",
+            "False",
+            "Number",
+            "Numeric",
+            "HeapNumber",
+            "Name",
+            "Map",
+        ];
+        NAMES.iter().any(|item| name == *item) || name.contains("JS")
+    }
+}
+
+fn prefer_match(left: CallMatch, right: CallMatch) -> CallMatch {
+    match (left, right) {
+        (
+            CallMatch::Match {
+                ret: left_ret,
+                score: left_score,
+            },
+            CallMatch::Match {
+                ret: right_ret,
+                score: right_score,
+            },
+        ) => {
+            if right_score > left_score {
+                CallMatch::Match {
+                    ret: right_ret,
+                    score: right_score,
+                }
+            } else {
+                CallMatch::Match {
+                    ret: left_ret,
+                    score: left_score,
+                }
+            }
+        }
+        (CallMatch::Match { ret, score }, _) | (_, CallMatch::Match { ret, score }) => {
+            CallMatch::Match { ret, score }
+        }
+        (CallMatch::InferFail(reason), _) | (_, CallMatch::InferFail(reason)) => {
+            CallMatch::InferFail(reason)
+        }
+        _ => CallMatch::Skip,
     }
 }
 

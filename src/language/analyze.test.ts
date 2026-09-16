@@ -72,6 +72,37 @@ transitioning macro ArrayIsArray_Inline(
     const offset = analysis.text.indexOf("js-proxy");
     expect(includeAt(analysis, offset)?.path).toBe("src/objects/js-proxy.h");
   });
+
+  test("does not emit parser garbage for otherwise goto, this, or rest arguments", () => {
+    const source = `
+struct Vec {
+  macro Recheck(): void labels CastError {}
+  macro Store(implicit context: Context)(): JSAny {
+    return this.fixedArray;
+  }
+  fixedArray: JSAny;
+}
+macro Flatten(implicit context: Context)(source: Vec, length: Smi): Vec labels Bailout {
+  const empty: JSAny = length > 0 ? length : 0;
+  source.Recheck() otherwise goto Bailout;
+  return Vec{fixedArray: empty};
+}
+transitioning javascript builtin ArrayPrototypeFlat(
+    js-implicit context: NativeContext, receiver: JSAny)(...arguments): JSAny {
+  return arguments[0];
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    const garbage = [
+      "Expected ';'",
+      "Expected ')'",
+      "Cannot resolve 'this'",
+      "Cannot resolve 'goto'",
+      "Cannot resolve 'arguments'",
+      "Cannot resolve 'context'",
+    ];
+    expect(analysis.diagnostics.filter((item) => garbage.includes(item.message))).toEqual([]);
+  });
 });
 
 describe("resolveDefinition", () => {

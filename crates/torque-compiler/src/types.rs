@@ -264,6 +264,9 @@ impl TypeStore {
                 }
                 common
             }
+            TypeKind::Abstract { parent, .. } => {
+                parent.map(|p| self.fields_of(p)).unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }
