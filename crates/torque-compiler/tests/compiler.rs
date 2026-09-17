@@ -624,6 +624,42 @@ transitioning javascript builtin ArrayPrototypeFlat(
 }
 
 #[test]
+fn dump_real_iterator() {
+    let path = "/tmp/v8-full-tq/src/builtins/iterator.tq";
+    if std::fs::read_to_string(path).is_err() {
+        return;
+    }
+    let mut files = Vec::new();
+    fn walk(dir: &std::path::Path, files: &mut Vec<SourceFileInput>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("tq") {
+                files.push(SourceFileInput {
+                    uri: path.to_string_lossy().into_owned(),
+                    text: std::fs::read_to_string(&path).unwrap_or_default(),
+                });
+            }
+        }
+    }
+    walk(std::path::Path::new("/tmp/v8-full-tq"), &mut files);
+    let result = compile(&files);
+    let Some(file) = result
+        .files
+        .iter()
+        .find(|item| item.uri.ends_with("src/builtins/iterator.tq"))
+    else {
+        return;
+    };
+    assert_no_false_positives(file);
+    assert!(file.diagnostics.is_empty(), "{:?}", messages(file));
+}
+
+#[test]
 fn dump_real_array_flat() {
     let path = "/tmp/v8-tq/array-flat.tq";
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -635,4 +671,192 @@ fn dump_real_array_flat() {
         .filter(|item| is_parser_garbage(item))
         .collect();
     assert!(garbage.is_empty(), "{garbage:?}");
+}
+
+fn assert_no_false_positives(file: &torque_compiler::FileAnalysis) {
+    let messages = messages(file);
+    let garbage: Vec<_> = messages
+        .iter()
+        .filter(|item| {
+            is_parser_garbage(item)
+                || item.contains("IntegerLiteral' is not assignable")
+                || item.contains("constexpr string' is not assignable")
+                || item.contains("Missing return value")
+                || item.contains("Cannot resolve 'IteratorStep'")
+                || item.contains("Cannot resolve 'IteratorValue'")
+                || item.contains("Cannot resolve 'GetIterator'")
+                || item.contains("Cannot find matching callable 'CollectCallFeedback'")
+                || item.contains("Cannot find matching callable 'ThrowIfNotJSReceiver'")
+                || item.contains("Cannot find matching callable 'ThrowTypeError'")
+                || item.contains("Cannot find matching callable 'NativeContextSlot'")
+                || item.contains("Cannot compare 'int31' with 'IteratorRecord'")
+        })
+        .cloned()
+        .collect();
+    assert!(garbage.is_empty(), "{messages:?}");
+}
+
+#[test]
+fn v8_void_and_integer_literal_types_keep_literals_and_bare_returns() {
+    let source = r#"
+type IntegerLiteral constexpr 'IntegerLiteral';
+type void;
+type never;
+type int31 extends int32;
+type intptr generates 'IntPtrT' constexpr 'intptr_t';
+const kCount: constexpr int31 = 2;
+macro Early(x: JSAny): void {
+  if (x == Undefined) return;
+}
+macro Main(): intptr {
+  let i: intptr = 0;
+  Early(Undefined);
+  return i;
+}
+"#;
+    let file = compile_one("memory://lits-v8.tq", source.trim());
+    assert_no_false_positives(&file);
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("not assignable") || item.contains("Missing return")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn cpp_assembler_macros_are_called_by_their_method_name() {
+    let source = r#"
+struct IteratorRecord {
+  object: JSReceiver;
+  next: JSAny;
+}
+extern transitioning macro IteratorBuiltinsAssembler::GetIterator(
+    implicit context: Context)(JSAny): IteratorRecord;
+extern transitioning macro IteratorBuiltinsAssembler::IteratorStep(
+    implicit context: Context)(IteratorRecord): JSReceiver
+    labels Done;
+extern transitioning macro IteratorBuiltinsAssembler::IteratorValue(
+    implicit context: Context)(JSReceiver): JSAny;
+macro Walk(implicit context: Context)(value: JSAny): JSAny labels Done {
+  const iterated = GetIterator(value);
+  const result = IteratorStep(iterated) otherwise Done;
+  return IteratorValue(result);
+}
+"#;
+    let file = compile_one("memory://assembler.tq", source.trim());
+    assert_no_false_positives(&file);
+    assert!(
+        names(&file).iter().any(|item| item == "macro:IteratorStep"),
+        "{:?}",
+        names(&file)
+    );
+}
+
+#[test]
+fn size_of_generic_returns_int31_not_the_type_argument() {
+    let source = r#"
+struct IteratorRecord {
+  object: JSReceiver;
+}
+const kCount: constexpr int31 = 2;
+const kTaggedSize: constexpr int31 = 8;
+macro SizeOf<T: type>(): constexpr int31 {
+  return 16;
+}
+macro Main(): bool {
+  return kCount * kTaggedSize == SizeOf<IteratorRecord>();
+}
+"#;
+    let file = compile_one("memory://sizeof.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Cannot compare") || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn string_literals_assign_to_constexpr_string_and_match_overloads() {
+    let source = r#"
+type string constexpr 'const char*';
+extern enum MessageTemplate {
+  kCalledOnNonObject,
+  kSymbolIteratorInvalid
+}
+extern macro ThrowTypeError(
+    implicit context: Context)(constexpr MessageTemplate,
+    constexpr string): never;
+extern transitioning macro ThrowIfNotJSReceiver(
+    implicit context: Context)(JSAny, constexpr MessageTemplate,
+    constexpr string): void;
+macro Main(implicit context: Context)(value: JSAny): void {
+  const methodName: constexpr string = 'Iterator';
+  ThrowIfNotJSReceiver(value, MessageTemplate::kSymbolIteratorInvalid, '');
+  ThrowTypeError(MessageTemplate::kCalledOnNonObject, methodName);
+}
+"#;
+    let file = compile_one("memory://strings.tq", source.trim());
+    assert_no_false_positives(&file);
+}
+
+#[test]
+fn make_lazy_produces_lazy_and_matches_collect_call_feedback() {
+    let source = r#"
+type string constexpr 'const char*';
+type Lazy<T: type>;
+intrinsic %MakeLazy<T: type, A1: type>(
+    getter: constexpr string, arg1: A1): Lazy<T>;
+macro CollectCallFeedback(
+    maybeTarget: JSAny, maybeReceiver: Lazy<JSAny>, context: Context,
+    slotId: uintptr): void {}
+macro GetLazyReceiver(receiver: JSAny): JSAny {
+  return receiver;
+}
+macro Main(iteratorMethod: JSAny, receiver: JSAny, context: Context,
+    slotId: uintptr): void {
+  CollectCallFeedback(
+      iteratorMethod, %MakeLazy<JSAny, JSAny>('GetLazyReceiver', receiver),
+      context, slotId);
+}
+"#;
+    let file = compile_one("memory://lazy.tq", source.trim());
+    assert_no_false_positives(&file);
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("CollectCallFeedback") || item.contains("MakeLazy")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn native_context_slot_infers_t_from_enum_entry_slot_type() {
+    let source = r#"
+type Slot<Container: type, T: type> extends intptr;
+extern class JSFunction extends JSReceiver {}
+extern enum ContextSlot extends intptr constexpr 'Context::Field' {
+  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>,
+}
+macro NativeContextSlot<C: type, T: type>(
+    implicit context: C)(index: Slot<NativeContext, T>): T {
+  return %RawDownCast<T>(index);
+}
+macro Main(implicit context: Context)(): JSFunction {
+  return *NativeContextSlot(ContextSlot::PROMISE_FUNCTION_INDEX);
+}
+"#;
+    let file = compile_one("memory://slot.tq", source.trim());
+    assert_no_false_positives(&file);
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("NativeContextSlot") || item.contains("PROMISE_FUNCTION")),
+        "{messages:?}"
+    );
 }

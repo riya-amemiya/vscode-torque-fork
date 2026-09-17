@@ -312,13 +312,13 @@ impl Checker {
                     let qualified = format!("{}::{}", namespace.join("::"), name.name);
                     if let Some(id) = self.types_by_name.get(&qualified).copied() {
                         self.define(name.span, self.types.get(id).span, self.uri_for_type(id));
-                        return id;
+                        return self.apply_type_args(id, generic_args, name.span);
                     }
                 }
                 if let Some(id) = self.types_by_name.get(&name.name).copied() {
                     self.define(name.span, self.types.get(id).span, self.uri_for_type(id));
-                    let _ = (is_constexpr, generic_args);
-                    return id;
+                    let _ = is_constexpr;
+                    return self.apply_type_args(id, generic_args, name.span);
                 }
                 self.error(name.span, format!("Cannot resolve type '{}'", name.name));
                 self.error_ty
@@ -331,6 +331,27 @@ impl Checker {
             TypeExpr::Function { result, .. } => self.resolve_type_expr(result),
             TypeExpr::Reference { inner, .. } => self.resolve_type_expr(inner),
         }
+    }
+
+    fn apply_type_args(&mut self, base: TypeId, generic_args: &[TypeExpr], span: Span) -> TypeId {
+        if generic_args.is_empty() {
+            return base;
+        }
+        let args: Vec<TypeId> = generic_args
+            .iter()
+            .map(|ty| self.resolve_type_expr(ty))
+            .collect();
+        let name = match &self.types.get(base).kind {
+            TypeKind::Abstract { name, .. }
+            | TypeKind::Alias { name, .. }
+            | TypeKind::Class { name, .. }
+            | TypeKind::Struct { name, .. }
+            | TypeKind::Enum { name, .. }
+            | TypeKind::GenericParam { name }
+            | TypeKind::Applied { name, .. } => name.clone(),
+            _ => self.types.name_of(base),
+        };
+        self.types.intern_applied(name, args, span)
     }
 
     fn uri_for_type(&self, id: TypeId) -> String {
@@ -502,7 +523,16 @@ impl Checker {
                 }
                 Decl::AbstractType { name, extends, .. } => {
                     let parent = extends.as_ref().map(|ty| self.resolve_type_expr(ty));
-                    if let Some(id) = self.types_by_name.get(&name.name).copied() {
+                    if let Some(id) = self.types_by_name.get(&name.name).copied()
+                        && !matches!(
+                            self.types.get(id).kind,
+                            TypeKind::Void
+                                | TypeKind::Never
+                                | TypeKind::IntegerLiteral
+                                | TypeKind::StringLiteral
+                                | TypeKind::Error
+                        )
+                    {
                         self.types.get_mut(id).kind = TypeKind::Abstract {
                             name: name.name.clone(),
                             parent,
@@ -625,12 +655,15 @@ impl Checker {
                         .iter()
                         .map(|(ident, _)| (ident.name.clone(), ident.span))
                         .collect();
-                    for (ident, _) in entries {
-                        let ty = self
-                            .types_by_name
-                            .get(&name.name)
-                            .copied()
-                            .unwrap_or(self.error_ty);
+                    for (ident, entry_ty) in entries {
+                        let ty = if let Some(entry_ty) = entry_ty {
+                            self.resolve_type_expr(entry_ty)
+                        } else {
+                            self.types_by_name
+                                .get(&name.name)
+                                .copied()
+                                .unwrap_or(self.error_ty)
+                        };
                         self.insert_value(Binding {
                             name: ident.name.clone(),
                             kind: "const".into(),
@@ -1255,9 +1288,13 @@ impl Checker {
                     .collect();
                 let arg_types: Vec<TypeId> =
                     args.iter().map(|arg| self.check_expr(arg, None)).collect();
-                if let Some(ret) = type_args.first() {
-                    let _ = arg_types;
-                    return *ret;
+                if let Some(ret) =
+                    self.try_resolve_call(&name.name, name.span, &type_args, &arg_types, name.span)
+                {
+                    return ret;
+                }
+                if let Some(ty) = type_args.first() {
+                    return *ty;
                 }
                 self.error(
                     name.span,
@@ -1545,9 +1582,6 @@ impl Checker {
         let (matched, _) = self.collect_matches(name, type_args, arg_types);
         let (binding, ret, _) = matched.first()?;
         self.define(name_span, binding.span, binding.uri.clone());
-        if binding.generic_params.len() == 1 && !type_args.is_empty() {
-            return Some(type_args[0]);
-        }
         if (binding.name == "Cast"
             || binding.name == "Convert"
             || binding.name == "UnsafeCast"
@@ -1560,7 +1594,7 @@ impl Checker {
     }
 
     fn inference_failure(
-        &self,
+        &mut self,
         name: &str,
         type_args: &[TypeId],
         arg_types: &[TypeId],
@@ -1570,7 +1604,7 @@ impl Checker {
     }
 
     fn collect_matches(
-        &self,
+        &mut self,
         name: &str,
         type_args: &[TypeId],
         arg_types: &[TypeId],
@@ -1658,7 +1692,7 @@ impl Checker {
     }
 
     fn match_candidate(
-        &self,
+        &mut self,
         candidate: &Binding,
         type_args: &[TypeId],
         arg_types: &[TypeId],
@@ -1684,7 +1718,7 @@ impl Checker {
     }
 
     fn match_params(
-        &self,
+        &mut self,
         candidate: &Binding,
         type_args: &[TypeId],
         params: &[TypeId],
@@ -1706,33 +1740,84 @@ impl Checker {
             if self.types.is_error(*arg) {
                 continue;
             }
-            if let Some(name) = self.types.generic_param_name(*param)
-                && let Some(index) = candidate
-                    .generic_params
-                    .iter()
-                    .position(|item| item == name)
-            {
-                match self.unify_inferred(&mut inferred[index], *arg) {
-                    Ok(()) => score += 1,
-                    Err(reason) => return CallMatch::InferFail(reason),
+            match self.types_unify(*arg, *param, candidate, &mut inferred) {
+                Ok(true) => {
+                    if self.types.unwrap_alias(*arg) == self.types.unwrap_alias(*param) {
+                        score += 2;
+                    } else {
+                        score += 1;
+                    }
                 }
-                continue;
-            }
-            if self.types.unwrap_alias(*arg) == self.types.unwrap_alias(*param) {
-                score += 2;
-            } else if self.can_convert(*arg, *param) {
-                score += 1;
-            } else {
-                return CallMatch::Skip;
+                Ok(false) => return CallMatch::Skip,
+                Err(reason) => return CallMatch::InferFail(reason),
             }
         }
         if inferred.iter().any(Option::is_none) {
-            return CallMatch::InferFail(
-                "failed to infer arguments for all type parameters".into(),
-            );
+            for (index, found) in inferred.iter().enumerate() {
+                if found.is_some() {
+                    continue;
+                }
+                let Some(name) = candidate.generic_params.get(index) else {
+                    continue;
+                };
+                if params
+                    .iter()
+                    .any(|param| self.types.mentions_generic(*param, name))
+                    || self.types.mentions_generic(candidate.return_type, name)
+                {
+                    return CallMatch::InferFail(
+                        "failed to infer arguments for all type parameters".into(),
+                    );
+                }
+            }
         }
         let ret = self.substitute_generics(candidate.return_type, candidate, &inferred);
         CallMatch::Match { ret, score }
+    }
+
+    fn types_unify(
+        &self,
+        arg: TypeId,
+        param: TypeId,
+        candidate: &Binding,
+        inferred: &mut [Option<TypeId>],
+    ) -> Result<bool, String> {
+        let arg = self.types.unwrap_alias(arg);
+        let param = self.types.unwrap_alias(param);
+        if self.types.is_error(arg) || self.types.is_error(param) {
+            return Ok(true);
+        }
+        if let Some(name) = self.types.generic_param_name(param)
+            && let Some(index) = candidate
+                .generic_params
+                .iter()
+                .position(|item| item == name)
+        {
+            self.unify_inferred(&mut inferred[index], arg)?;
+            return Ok(true);
+        }
+        if let TypeKind::Applied {
+            name: arg_name,
+            args: arg_args,
+        } = &self.types.get(arg).kind
+            && let TypeKind::Applied {
+                name: param_name,
+                args: param_args,
+            } = &self.types.get(param).kind
+        {
+            if arg_name != param_name || arg_args.len() != param_args.len() {
+                return Ok(false);
+            }
+            let arg_args = arg_args.clone();
+            let param_args = param_args.clone();
+            for (left, right) in arg_args.into_iter().zip(param_args) {
+                if !self.types_unify(left, right, candidate, inferred)? {
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
+        Ok(self.can_convert(arg, param))
     }
 
     fn unify_inferred(&self, slot: &mut Option<TypeId>, incoming: TypeId) -> Result<(), String> {
@@ -1760,11 +1845,12 @@ impl Checker {
     }
 
     fn substitute_generics(
-        &self,
+        &mut self,
         ty: TypeId,
         candidate: &Binding,
         inferred: &[Option<TypeId>],
     ) -> TypeId {
+        let ty = self.types.unwrap_alias(ty);
         if let Some(name) = self.types.generic_param_name(ty)
             && let Some(index) = candidate
                 .generic_params
@@ -1774,6 +1860,24 @@ impl Checker {
         {
             return found;
         }
+        if let TypeKind::Applied { name, args } = &self.types.get(ty).kind {
+            let name = name.clone();
+            let args = args.clone();
+            let mapped: Vec<TypeId> = args
+                .into_iter()
+                .map(|arg| self.substitute_generics(arg, candidate, inferred))
+                .collect();
+            return self.types.intern_applied(name, mapped, Span::dummy());
+        }
+        if let TypeKind::Union { members } = &self.types.get(ty).kind {
+            let members = members.clone();
+            let mut result = self.never_ty;
+            for member in members {
+                let mapped = self.substitute_generics(member, candidate, inferred);
+                result = self.types.union_of(result, mapped, Span::dummy());
+            }
+            return result;
+        }
         ty
     }
 
@@ -1782,6 +1886,9 @@ impl Checker {
             return true;
         }
         if self.types.is_integer_literal(from) && self.types.numeric_like(to) {
+            return true;
+        }
+        if self.types.is_string_literal(from) && self.types.is_string_like(to) {
             return true;
         }
         if self.types.is_integer_literal(from) && self.types.name_of(to).contains("bool") {
