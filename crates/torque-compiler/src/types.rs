@@ -22,6 +22,7 @@ pub struct FieldInfo {
     pub name: String,
     pub ty: TypeId,
     pub span: Span,
+    pub indexed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +51,13 @@ pub enum TypeKind {
     },
     Struct {
         name: String,
+        parent: Option<TypeId>,
         fields: Vec<FieldInfo>,
+        generic_params: Vec<String>,
+    },
+    Function {
+        params: Vec<TypeId>,
+        result: TypeId,
     },
     Enum {
         name: String,
@@ -101,6 +108,19 @@ impl TypeStore {
             });
             return TypeId((self.types.len() - 1) as u32);
         }
+        if let TypeKind::Function { params, result } = &kind {
+            for (index, existing) in self.types.iter().enumerate() {
+                if let TypeKind::Function {
+                    params: existing_params,
+                    result: existing_result,
+                } = &existing.kind
+                    && existing_params == params
+                    && existing_result == result
+                {
+                    return TypeId(index as u32);
+                }
+            }
+        }
         if let TypeKind::Applied { name, args } = &kind {
             for (index, existing) in self.types.iter().enumerate() {
                 if let TypeKind::Applied {
@@ -120,6 +140,32 @@ impl TypeStore {
 
     pub fn intern_applied(&mut self, name: String, args: Vec<TypeId>, span: Span) -> TypeId {
         self.intern(TypeKind::Applied { name, args }, span)
+    }
+
+    pub fn intern_generic_param(&mut self, name: String, span: Span) -> TypeId {
+        for (index, existing) in self.types.iter().enumerate() {
+            if let TypeKind::GenericParam {
+                name: existing_name,
+            } = &existing.kind
+                && existing_name == &name
+            {
+                return TypeId(index as u32);
+            }
+        }
+        self.intern(TypeKind::GenericParam { name }, span)
+    }
+
+    pub fn is_constexpr(&self, id: TypeId) -> bool {
+        match &self.get(self.unwrap_alias(id)).kind {
+            TypeKind::Abstract { is_constexpr, .. } => *is_constexpr,
+            TypeKind::IntegerLiteral | TypeKind::StringLiteral => true,
+            _ => false,
+        }
+    }
+
+    pub fn base_name(&self, id: TypeId) -> String {
+        let name = self.name_of(id);
+        name.strip_prefix("constexpr ").unwrap_or(&name).to_string()
     }
 
     pub fn get(&self, id: TypeId) -> &TypeData {
@@ -161,6 +207,14 @@ impl TypeStore {
             | TypeKind::Struct { name, .. }
             | TypeKind::Enum { name, .. }
             | TypeKind::GenericParam { name } => name.clone(),
+            TypeKind::Function { params, result } => {
+                let inner = params
+                    .iter()
+                    .map(|id| self.name_of(*id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("builtin({}) => {}", inner, self.name_of(*result))
+            }
             TypeKind::Union { members } => members
                 .iter()
                 .map(|id| self.name_of(*id))
@@ -223,6 +277,13 @@ impl TypeStore {
                 .clone()
                 .into_iter()
                 .any(|arg| self.mentions_generic(arg, name)),
+            TypeKind::Function { params, result } => {
+                params
+                    .clone()
+                    .into_iter()
+                    .any(|param| self.mentions_generic(param, name))
+                    || self.mentions_generic(*result, name)
+            }
             TypeKind::Union { members } => members
                 .clone()
                 .into_iter()
@@ -334,6 +395,7 @@ impl TypeStore {
             current = match &self.get(id).kind {
                 TypeKind::Abstract { parent, .. }
                 | TypeKind::Class { parent, .. }
+                | TypeKind::Struct { parent, .. }
                 | TypeKind::Enum { parent, .. } => *parent,
                 _ => None,
             };
@@ -366,15 +428,30 @@ impl TypeStore {
                 all.extend(fields);
                 all
             }
-            TypeKind::Struct { fields, .. } => fields.clone(),
+            TypeKind::Struct { fields, parent, .. } => {
+                let parent = *parent;
+                let fields = fields.clone();
+                let mut all = parent
+                    .map(|p| self.fields_of_rec(p, seen))
+                    .unwrap_or_default();
+                all.extend(fields);
+                all
+            }
             TypeKind::Union { members } => {
                 let members = members.clone();
-                if members.is_empty() {
-                    return Vec::new();
+                let mut nonempty = Vec::new();
+                for member in members {
+                    let mut member_seen = seen.clone();
+                    let fields = self.fields_of_rec(member, &mut member_seen);
+                    if !fields.is_empty() {
+                        nonempty.push(fields);
+                    }
                 }
-                let mut common = self.fields_of_rec(members[0], seen);
-                for member in &members[1..] {
-                    let fields = self.fields_of_rec(*member, seen);
+                let Some((first, rest)) = nonempty.split_first() else {
+                    return Vec::new();
+                };
+                let mut common = first.clone();
+                for fields in rest {
                     common.retain(|field| fields.iter().any(|other| other.name == field.name));
                 }
                 common
@@ -390,7 +467,11 @@ impl TypeStore {
         if self.is_integer_literal(id) {
             return true;
         }
-        let name = self.name_of(id);
+        let id = self.unwrap_alias(id);
+        if let TypeKind::Applied { .. } = &self.get(id).kind {
+            return false;
+        }
+        let name = self.base_name(id);
         const NAMES: &[&str] = &[
             "Smi",
             "Number",
@@ -407,13 +488,36 @@ impl TypeStore {
             "uint64",
             "IntegerLiteral",
         ];
-        NAMES
-            .iter()
-            .any(|n| name == *n || name == format!("constexpr {n}"))
-            || name.contains("int")
-            || name.contains("float")
-            || name.contains("Smi")
-            || name.contains("Number")
+        if NAMES.iter().any(|n| name == *n)
+            || name.starts_with("int")
+            || name.starts_with("uint")
+            || name.starts_with("float")
+            || name.starts_with("char")
+            || name.ends_with("Smi")
+            || name.ends_with("Number")
+            || name.contains("Integer")
+        {
+            return true;
+        }
+        match &self.get(id).kind {
+            TypeKind::Abstract {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Class {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Struct {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Enum {
+                parent: Some(parent),
+                ..
+            } if *parent != id => self.numeric_like(*parent),
+            _ => false,
+        }
     }
 }
 
@@ -450,6 +554,7 @@ mod tests {
                     name: "map".into(),
                     ty: object,
                     span: dummy,
+                    indexed: false,
                 }],
             },
             dummy,

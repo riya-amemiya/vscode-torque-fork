@@ -27,6 +27,7 @@ struct Parser<'a> {
     file: u32,
     tokens: &'a [Token],
     index: usize,
+    extra_gt: u32,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -47,6 +48,9 @@ impl<'a> Parser<'a> {
     }
 
     fn at(&mut self, text: &str) -> bool {
+        if text == ">" {
+            return self.at_gt();
+        }
         self.peek().is_some_and(|t| t.text == text)
     }
 
@@ -61,11 +65,46 @@ impl<'a> Parser<'a> {
     }
 
     fn eat(&mut self, text: &str) -> bool {
+        if text == ">" {
+            return self.eat_gt();
+        }
         if self.at(text) {
             self.index += 1;
             true
         } else {
             false
+        }
+    }
+
+    fn at_gt(&mut self) -> bool {
+        self.extra_gt > 0
+            || matches!(
+                self.peek().map(|t| t.text.as_str()),
+                Some(">" | ">>" | ">>>")
+            )
+    }
+
+    fn eat_gt(&mut self) -> bool {
+        if self.extra_gt > 0 {
+            self.extra_gt -= 1;
+            return true;
+        }
+        match self.peek().map(|t| t.text.as_str()) {
+            Some(">") => {
+                self.index += 1;
+                true
+            }
+            Some(">>") => {
+                self.index += 1;
+                self.extra_gt = 1;
+                true
+            }
+            Some(">>>") => {
+                self.index += 1;
+                self.extra_gt = 2;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -81,6 +120,18 @@ impl<'a> Parser<'a> {
     }
 
     fn expect(&mut self, text: &str) -> Option<&'a Token> {
+        if text == ">" {
+            if self.eat_gt() {
+                return self.tokens.get(self.index.saturating_sub(1));
+            }
+            let span = self
+                .peek()
+                .map(|t| self.span_of(t))
+                .unwrap_or(Span::new(self.file, 0, 0));
+            self.diagnostics
+                .push(Diagnostic::error(span, "Expected '>'"));
+            return None;
+        }
         if self.at(text) {
             self.take()
         } else {
@@ -148,11 +199,29 @@ impl<'a> Parser<'a> {
                 span: self.span_of(token),
             };
             if self.eat("(") {
-                if let Some(token) = self.take() {
-                    annotation.argument = Some(token.text.trim_matches(['\'', '"']).to_string());
+                let mut depth = 1;
+                let mut parts = Vec::new();
+                while depth > 0 {
+                    let Some(token) = self.peek() else {
+                        break;
+                    };
+                    if token.text == "(" {
+                        depth += 1;
+                    } else if token.text == ")" {
+                        depth -= 1;
+                        if depth == 0 {
+                            annotation.span = annotation.span.merge(self.span_of(token));
+                            self.take();
+                            break;
+                        }
+                    }
+                    let token = self.take().unwrap();
+                    parts.push(token.text.clone());
                     annotation.span = annotation.span.merge(self.span_of(token));
                 }
-                self.eat(")");
+                if !parts.is_empty() {
+                    annotation.argument = Some(parts.join(""));
+                }
             }
             annotations.push(annotation);
         }
@@ -172,7 +241,7 @@ impl<'a> Parser<'a> {
         args
     }
 
-    fn parse_generic_params(&mut self) -> Vec<Ident> {
+    fn parse_generic_params(&mut self) -> Vec<GenericParam> {
         if !self.eat("<") {
             return Vec::new();
         }
@@ -180,14 +249,20 @@ impl<'a> Parser<'a> {
             Vec::new()
         } else {
             self.comma_separated(|parser| {
-                let name = parser.parse_name()?;
+                let ty = parser.parse_type()?;
+                let mut is_variable = false;
                 if parser.eat(":") {
                     parser.eat("type");
+                    is_variable = true;
                 }
                 if parser.eat("extends") {
                     let _ = parser.parse_type();
+                    is_variable = true;
                 }
-                Some(name)
+                Some(GenericParam {
+                    name: type_expr_as_ident(&ty),
+                    is_variable,
+                })
             })
         };
         self.expect(">");
@@ -268,8 +343,14 @@ impl<'a> Parser<'a> {
             Some(())
         };
         let _ = mutable;
-        let is_constexpr = self.eat("constexpr");
-        let (namespace, name) = self.parse_namespace_and_name();
+        let mut is_constexpr = self.eat("constexpr");
+        let (namespace, mut name) = self.parse_namespace_and_name();
+        if name.name == "constexpr" {
+            is_constexpr = true;
+            if let Some(next) = self.parse_name() {
+                name = next;
+            }
+        }
         if name.name.is_empty() {
             return None;
         }
@@ -466,6 +547,23 @@ impl<'a> Parser<'a> {
                 span: self.span_of(start),
             });
         }
+        if self.at("return") {
+            let start = self.take().unwrap();
+            let value = if self.at(",")
+                || self.at(";")
+                || self.at("}")
+                || self.at(")")
+                || self.peek().is_none()
+            {
+                None
+            } else {
+                self.parse_expression()
+            };
+            return Some(Stmt::Return {
+                value,
+                span: self.span_of(start),
+            });
+        }
         if matches!(
             self.peek().map(|t| t.text.as_str()),
             Some("debug" | "unreachable")
@@ -525,6 +623,7 @@ impl<'a> Parser<'a> {
 
     fn looks_like_generic_call(&mut self) -> bool {
         let saved = self.index;
+        let saved_extra = self.extra_gt;
         if !self.eat("<") {
             return false;
         }
@@ -533,18 +632,24 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.take() {
             match token.text.as_str() {
                 "<" => depth += 1,
-                ">" => {
-                    depth -= 1;
-                    if depth == 0 {
-                        ok = self.at("(");
-                        break;
-                    }
-                }
+                ">" => depth -= 1,
+                ">>" => depth -= 2,
+                ">>>" => depth -= 3,
                 ";" | "{" | "}" => break,
                 _ => {}
             }
+            if depth <= 0 {
+                ok = self.at("(")
+                    || self.at("{")
+                    || self.at(";")
+                    || self.at(",")
+                    || self.at(")")
+                    || self.at("]");
+                break;
+            }
         }
         self.index = saved;
+        self.extra_gt = saved_extra;
         ok
     }
 
@@ -890,6 +995,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Option<Stmt> {
+        if self.at_kind(TokenKind::Annotation) {
+            self.parse_annotations();
+            return self.parse_statement();
+        }
         if self.at("deferred") || self.at("{") {
             return self.parse_block();
         }
@@ -1201,6 +1310,7 @@ impl<'a> Parser<'a> {
         let weak = self.eat("weak");
         let is_const = self.eat("const");
         let name = self.parse_name()?;
+        let _optional = self.eat("?");
         let index = if self.eat("[") {
             let expr = self.parse_expression();
             self.expect("]");
@@ -1478,6 +1588,7 @@ impl<'a> Parser<'a> {
                 self.expect(";");
                 return Some(Decl::TypeAlias {
                     name,
+                    generic_params,
                     ty,
                     annotations,
                 });
@@ -1576,10 +1687,48 @@ impl<'a> Parser<'a> {
                 self.span_of(token),
             );
         }
+        if self.looks_like_bare_callable() {
+            let span = self
+                .peek()
+                .map(|t| self.span_of(t))
+                .unwrap_or(Span::dummy());
+            return self.parse_callable_after_kind(
+                annotations,
+                transitioning,
+                javascript,
+                is_extern,
+                operator_name,
+                CallableKind::Macro,
+                span,
+            );
+        }
         if is_extern || transitioning || javascript || operator_name.is_some() {
             self.error_here("Expected callable or type declaration");
         }
         None
+    }
+
+    fn looks_like_bare_callable(&mut self) -> bool {
+        if !self.peek().is_some_and(|t| t.kind == TokenKind::Identifier) {
+            return false;
+        }
+        let saved = self.index;
+        let saved_extra = self.extra_gt;
+        if self.parse_name().is_none() {
+            self.index = saved;
+            self.extra_gt = saved_extra;
+            return false;
+        }
+        if !self.at("<") {
+            self.index = saved;
+            self.extra_gt = saved_extra;
+            return false;
+        }
+        let _ = self.parse_generic_args();
+        let ok = self.at("(");
+        self.index = saved;
+        self.extra_gt = saved_extra;
+        ok
     }
 
     fn looks_like_qualified_runtime(&mut self) -> bool {
@@ -1639,6 +1788,74 @@ fn binary_prec(op: &str) -> Option<(&'static str, u8, bool)> {
     }
 }
 
+fn type_expr_as_ident(ty: &TypeExpr) -> Ident {
+    match ty {
+        TypeExpr::Basic {
+            is_constexpr,
+            namespace,
+            name,
+            generic_args,
+        } if generic_args.is_empty() && namespace.is_empty() => {
+            if *is_constexpr {
+                Ident {
+                    name: format!("constexpr {}", name.name),
+                    span: name.span,
+                }
+            } else {
+                name.clone()
+            }
+        }
+        _ => Ident {
+            name: type_expr_name(ty),
+            span: ty.span(),
+        },
+    }
+}
+
+fn type_expr_name(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Basic {
+            is_constexpr,
+            namespace,
+            name,
+            generic_args,
+        } => {
+            let mut text = String::new();
+            if *is_constexpr {
+                text.push_str("constexpr ");
+            }
+            if !namespace.is_empty() {
+                text.push_str(&namespace.join("::"));
+                text.push_str("::");
+            }
+            text.push_str(&name.name);
+            if !generic_args.is_empty() {
+                text.push('<');
+                text.push_str(
+                    &generic_args
+                        .iter()
+                        .map(type_expr_name)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                text.push('>');
+            }
+            text
+        }
+        TypeExpr::Union(left, right) => {
+            format!("{}|{}", type_expr_name(left), type_expr_name(right))
+        }
+        TypeExpr::Reference { mutable, inner, .. } => {
+            if *mutable {
+                format!("&{}", type_expr_name(inner))
+            } else {
+                format!("const &{}", type_expr_name(inner))
+            }
+        }
+        TypeExpr::Function { .. } => "builtin".into(),
+    }
+}
+
 fn leak(op: &str) -> &'static str {
     match op {
         "&" => "&",
@@ -1688,6 +1905,7 @@ pub fn parse_file(uri: String, text: String, file: u32) -> ParseOutput {
         file,
         tokens: &tokens,
         index: 0,
+        extra_gt: 0,
         diagnostics,
     };
     let decls = parser.parse_file();

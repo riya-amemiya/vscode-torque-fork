@@ -21,6 +21,12 @@ pub struct Ident {
 }
 
 #[derive(Clone, Debug)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub is_variable: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct Annotation {
     pub name: String,
     pub argument: Option<String>,
@@ -330,7 +336,7 @@ pub struct CallableDecl {
     pub operator_name: Option<String>,
     pub kind: CallableKind,
     pub name: Ident,
-    pub generic_params: Vec<Ident>,
+    pub generic_params: Vec<GenericParam>,
     pub params: ParamList,
     pub return_type: Option<TypeExpr>,
     pub labels: Vec<LabelParam>,
@@ -355,12 +361,13 @@ pub enum Decl {
     },
     TypeAlias {
         name: Ident,
+        generic_params: Vec<GenericParam>,
         ty: TypeExpr,
         annotations: Vec<Annotation>,
     },
     AbstractType {
         name: Ident,
-        generic_params: Vec<Ident>,
+        generic_params: Vec<GenericParam>,
         extends: Option<TypeExpr>,
         generates: Option<String>,
         constexpr_generates: Option<String>,
@@ -381,7 +388,7 @@ pub enum Decl {
     },
     Struct {
         name: Ident,
-        generic_params: Vec<Ident>,
+        generic_params: Vec<GenericParam>,
         fields: Vec<FieldDecl>,
         methods: Vec<CallableDecl>,
         annotations: Vec<Annotation>,
