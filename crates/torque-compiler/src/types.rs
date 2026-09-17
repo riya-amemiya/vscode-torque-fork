@@ -60,6 +60,10 @@ pub enum TypeKind {
     GenericParam {
         name: String,
     },
+    Applied {
+        name: String,
+        args: Vec<TypeId>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -97,8 +101,25 @@ impl TypeStore {
             });
             return TypeId((self.types.len() - 1) as u32);
         }
+        if let TypeKind::Applied { name, args } = &kind {
+            for (index, existing) in self.types.iter().enumerate() {
+                if let TypeKind::Applied {
+                    name: existing_name,
+                    args: existing_args,
+                } = &existing.kind
+                    && existing_name == name
+                    && existing_args == args
+                {
+                    return TypeId(index as u32);
+                }
+            }
+        }
         self.types.push(TypeData { kind, span });
         TypeId((self.types.len() - 1) as u32)
+    }
+
+    pub fn intern_applied(&mut self, name: String, args: Vec<TypeId>, span: Span) -> TypeId {
+        self.intern(TypeKind::Applied { name, args }, span)
     }
 
     pub fn get(&self, id: TypeId) -> &TypeData {
@@ -145,6 +166,14 @@ impl TypeStore {
                 .map(|id| self.name_of(*id))
                 .collect::<Vec<_>>()
                 .join(" | "),
+            TypeKind::Applied { name, args } => {
+                let inner = args
+                    .iter()
+                    .map(|id| self.name_of(*id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{name}<{inner}>")
+            }
         }
     }
 
@@ -167,10 +196,38 @@ impl TypeStore {
         )
     }
 
+    pub fn is_string_literal(&self, id: TypeId) -> bool {
+        matches!(
+            self.get(self.unwrap_alias(id)).kind,
+            TypeKind::StringLiteral
+        )
+    }
+
+    pub fn is_string_like(&self, id: TypeId) -> bool {
+        let name = self.name_of(id);
+        name == "string" || name == "constexpr string"
+    }
+
     pub fn generic_param_name(&self, id: TypeId) -> Option<&str> {
         match &self.get(self.unwrap_alias(id)).kind {
             TypeKind::GenericParam { name } => Some(name.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn mentions_generic(&self, id: TypeId, name: &str) -> bool {
+        let id = self.unwrap_alias(id);
+        match &self.get(id).kind {
+            TypeKind::GenericParam { name: found } => found == name,
+            TypeKind::Applied { args, .. } => args
+                .clone()
+                .into_iter()
+                .any(|arg| self.mentions_generic(arg, name)),
+            TypeKind::Union { members } => members
+                .clone()
+                .into_iter()
+                .any(|member| self.mentions_generic(member, name)),
+            _ => false,
         }
     }
 
@@ -248,6 +305,25 @@ impl TypeStore {
             return members
                 .iter()
                 .any(|member| self.is_subtype_rec(sub, *member, seen));
+        }
+        if let TypeKind::Applied {
+            name: sub_name,
+            args: sub_args,
+        } = &self.get(sub).kind
+            && let TypeKind::Applied {
+                name: sup_name,
+                args: sup_args,
+            } = &self.get(sup).kind
+        {
+            if sub_name != sup_name || sub_args.len() != sup_args.len() {
+                return false;
+            }
+            let sub_args = sub_args.clone();
+            let sup_args = sup_args.clone();
+            return sub_args
+                .iter()
+                .zip(sup_args.iter())
+                .all(|(left, right)| self.is_subtype_rec(*left, *right, seen));
         }
         let mut current = Some(sub);
         let mut walked = 0;

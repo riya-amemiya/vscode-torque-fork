@@ -1163,13 +1163,14 @@ impl<'a> Parser<'a> {
         kind: CallableKind,
         start_span: Span,
     ) -> Option<Decl> {
-        let Some(name) = self.parse_name() else {
+        let (_namespace, name) = self.parse_namespace_and_name();
+        if name.name.is_empty() {
             self.diagnostics.push(Diagnostic::error(
                 start_span,
                 format!("Expected {} name", callable_kind_name(kind)),
             ));
             return None;
-        };
+        }
         let generic_params = self.parse_generic_params();
         let params = self.parse_param_list();
         let return_type = self.parse_return_type();
