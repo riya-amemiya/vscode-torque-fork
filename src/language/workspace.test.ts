@@ -33,6 +33,31 @@ describe("TorqueWorkspace", () => {
     expect(symbol?.name).toBe("Helper");
     expect(symbol?.start).toBe(helper.indexOf("Helper"));
   });
+
+  test("jumps to a method declared in another file", () => {
+    const store = new TorqueWorkspace();
+    const helper = `
+struct FastJSArrayForReadWitness {
+  macro Recheck(): void labels CastError {}
+}
+`.trim();
+    const main = `
+macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
+  w.Recheck() otherwise goto CastError;
+}
+`.trim();
+    store.load("memory://helper.tq", helper);
+    store.set("memory://main.tq", main);
+    const analysis = store.get("memory://main.tq");
+    const offset = main.indexOf("Recheck");
+    const [symbol] = resolveDefinition(analysis!, offset, store.all());
+    expect(symbol?.name).toBe("Recheck");
+    expect(symbol?.start).toBe(helper.indexOf("Recheck"));
+    const hit = analysis!.definitions.find(
+      (item) => offset >= item.fromStart && offset <= item.fromEnd,
+    );
+    expect(hit?.toUri).toBe("memory://helper.tq");
+  });
 });
 
 describe("compileSources", () => {
