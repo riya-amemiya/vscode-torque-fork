@@ -91,6 +91,10 @@ export function loadTorqueCompiler(wasmBytes: Uint8Array): void {
   wasmExports = instance.exports as unknown as WasmExports;
 }
 
+export function resetTorqueCompiler(): void {
+  wasmExports = undefined;
+}
+
 export function ensureTorqueCompiler(): void {
   if (wasmExports !== undefined) {
     return;
@@ -108,13 +112,18 @@ export function compileSources(files: Array<{ uri: string; text: string }>): Com
   if (wasm === undefined) {
     throw new Error("Torque WASM compiler is not loaded");
   }
-  const payload = encoder.encode(JSON.stringify({ files }));
-  const ptr = wasm.torque_alloc(payload.length);
-  new Uint8Array(wasm.memory.buffer).set(payload, ptr);
-  const outPtr = wasm.torque_compile(ptr, payload.length);
-  const outLen = wasm.torque_result_len();
-  const output = decoder.decode(new Uint8Array(wasm.memory.buffer, outPtr, outLen).slice());
-  wasm.torque_free(ptr, payload.length);
-  const parsed = JSON.parse(output) as { files: CompilerFile[] };
-  return parsed.files;
+  try {
+    const payload = encoder.encode(JSON.stringify({ files }));
+    const ptr = wasm.torque_alloc(payload.length);
+    new Uint8Array(wasm.memory.buffer).set(payload, ptr);
+    const outPtr = wasm.torque_compile(ptr, payload.length);
+    const outLen = wasm.torque_result_len();
+    const output = decoder.decode(new Uint8Array(wasm.memory.buffer, outPtr, outLen).slice());
+    wasm.torque_free(ptr, payload.length);
+    const parsed = JSON.parse(output) as { files: CompilerFile[] };
+    return parsed.files;
+  } catch (error) {
+    wasmExports = undefined;
+    throw error;
+  }
 }

@@ -12,14 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { analyzeDocuments, type DocumentAnalysis } from "./analyze";
+import { analyzeDocument, analyzeDocuments, type DocumentAnalysis } from "./analyze";
 
 export class TorqueWorkspace {
   private readonly sources = new Map<string, string>();
   private readonly documents = new Map<string, DocumentAnalysis>();
+  private dirty = false;
+
+  hasSource(uri: string): boolean {
+    return this.sources.has(uri);
+  }
 
   set(uri: string, text: string): DocumentAnalysis {
     this.sources.set(uri, text);
+    this.dirty = true;
     this.rebuild();
     const analysis = this.documents.get(uri);
     if (analysis === undefined) {
@@ -29,15 +35,58 @@ export class TorqueWorkspace {
   }
 
   load(uri: string, text: string): void {
+    const previous = this.sources.get(uri);
+    if (previous === text && this.documents.has(uri) && !this.dirty) {
+      return;
+    }
     this.sources.set(uri, text);
+    this.dirty = true;
+  }
+
+  ensure(uri: string, text: string): DocumentAnalysis {
+    this.load(uri, text);
+    if (this.dirty || !this.documents.has(uri)) {
+      this.rebuild();
+    }
+    const analysis = this.documents.get(uri);
+    if (analysis === undefined) {
+      throw new Error(`Torque compiler did not return analysis for ${uri}`);
+    }
+    return analysis;
   }
 
   rebuild(): void {
     const files = [...this.sources.entries()].map(([uri, text]) => ({ uri, text }));
-    const compiled = analyzeDocuments(files);
+    try {
+      const compiled = analyzeDocuments(files);
+      this.documents.clear();
+      for (const [uri, analysis] of compiled) {
+        this.documents.set(uri, analysis);
+      }
+      this.fillMissing(files);
+    } catch {
+      this.rebuildEach(files);
+    }
+    this.dirty = false;
+  }
+
+  private fillMissing(files: Array<{ uri: string; text: string }>): void {
+    for (const file of files) {
+      if (this.documents.has(file.uri)) {
+        continue;
+      }
+      this.documents.set(file.uri, analyzeDocument(file.text, file.uri));
+    }
+  }
+
+  private rebuildEach(files: Array<{ uri: string; text: string }>): void {
     this.documents.clear();
-    for (const [uri, analysis] of compiled) {
-      this.documents.set(uri, analysis);
+    for (const file of files) {
+      try {
+        this.documents.set(file.uri, analyzeDocument(file.text, file.uri));
+      } catch {
+        continue;
+      }
     }
   }
 

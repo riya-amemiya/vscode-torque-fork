@@ -201,11 +201,20 @@ impl TypeStore {
     }
 
     fn collect_union(&self, id: TypeId, out: &mut Vec<TypeId>) {
+        let mut seen = Vec::new();
+        self.collect_union_rec(id, out, &mut seen);
+    }
+
+    fn collect_union_rec(&self, id: TypeId, out: &mut Vec<TypeId>, seen: &mut Vec<TypeId>) {
         let id = self.unwrap_alias(id);
+        if seen.contains(&id) {
+            return;
+        }
+        seen.push(id);
         match &self.get(id).kind {
             TypeKind::Union { members } => {
                 for member in members {
-                    self.collect_union(*member, out);
+                    self.collect_union_rec(*member, out, seen);
                 }
             }
             _ => out.push(id),
@@ -213,19 +222,35 @@ impl TypeStore {
     }
 
     pub fn is_subtype(&self, sub: TypeId, sup: TypeId) -> bool {
+        let mut seen = Vec::new();
+        self.is_subtype_rec(sub, sup, &mut seen)
+    }
+
+    fn is_subtype_rec(&self, sub: TypeId, sup: TypeId, seen: &mut Vec<(TypeId, TypeId)>) -> bool {
         let sub = self.unwrap_alias(sub);
         let sup = self.unwrap_alias(sup);
         if sub == sup || self.is_never(sub) || self.is_error(sub) || self.is_error(sup) {
             return true;
         }
+        let pair = (sub, sup);
+        if seen.contains(&pair) {
+            return false;
+        }
+        seen.push(pair);
         if let TypeKind::Union { members } = &self.get(sub).kind {
-            return members.iter().all(|member| self.is_subtype(*member, sup));
+            let members = members.clone();
+            return members
+                .iter()
+                .all(|member| self.is_subtype_rec(*member, sup, seen));
         }
         if let TypeKind::Union { members } = &self.get(sup).kind {
-            return members.iter().any(|member| self.is_subtype(sub, *member));
+            let members = members.clone();
+            return members
+                .iter()
+                .any(|member| self.is_subtype_rec(sub, *member, seen));
         }
         let mut current = Some(sub);
-        let mut seen = 0;
+        let mut walked = 0;
         while let Some(id) = current {
             if id == sup {
                 return true;
@@ -236,8 +261,8 @@ impl TypeStore {
                 | TypeKind::Enum { parent, .. } => *parent,
                 _ => None,
             };
-            seen += 1;
-            if seen > 32 {
+            walked += 1;
+            if walked > 32 {
                 break;
             }
         }
@@ -245,28 +270,42 @@ impl TypeStore {
     }
 
     pub fn fields_of(&self, id: TypeId) -> Vec<FieldInfo> {
+        let mut seen = Vec::new();
+        self.fields_of_rec(id, &mut seen)
+    }
+
+    fn fields_of_rec(&self, id: TypeId, seen: &mut Vec<TypeId>) -> Vec<FieldInfo> {
         let id = self.unwrap_alias(id);
+        if seen.contains(&id) {
+            return Vec::new();
+        }
+        seen.push(id);
         match &self.get(id).kind {
             TypeKind::Class { fields, parent, .. } => {
-                let mut all = parent.map(|p| self.fields_of(p)).unwrap_or_default();
-                all.extend(fields.clone());
+                let parent = *parent;
+                let fields = fields.clone();
+                let mut all = parent
+                    .map(|p| self.fields_of_rec(p, seen))
+                    .unwrap_or_default();
+                all.extend(fields);
                 all
             }
             TypeKind::Struct { fields, .. } => fields.clone(),
             TypeKind::Union { members } => {
+                let members = members.clone();
                 if members.is_empty() {
                     return Vec::new();
                 }
-                let mut common = self.fields_of(members[0]);
+                let mut common = self.fields_of_rec(members[0], seen);
                 for member in &members[1..] {
-                    let fields = self.fields_of(*member);
+                    let fields = self.fields_of_rec(*member, seen);
                     common.retain(|field| fields.iter().any(|other| other.name == field.name));
                 }
                 common
             }
-            TypeKind::Abstract { parent, .. } => {
-                parent.map(|p| self.fields_of(p)).unwrap_or_default()
-            }
+            TypeKind::Abstract { parent, .. } => parent
+                .map(|p| self.fields_of_rec(p, seen))
+                .unwrap_or_default(),
             _ => Vec::new(),
         }
     }
@@ -299,5 +338,53 @@ impl TypeStore {
             || name.contains("float")
             || name.contains("Smi")
             || name.contains("Number")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FieldInfo, TypeKind, TypeStore};
+    use crate::span::Span;
+
+    #[test]
+    fn fields_of_survives_object_alias_to_child_union() {
+        let mut types = TypeStore::new();
+        let dummy = Span::dummy();
+        let object = types.intern(
+            TypeKind::Abstract {
+                name: "Object".into(),
+                parent: None,
+                is_constexpr: false,
+            },
+            dummy,
+        );
+        let smi = types.intern(
+            TypeKind::Abstract {
+                name: "Smi".into(),
+                parent: Some(object),
+                is_constexpr: false,
+            },
+            dummy,
+        );
+        let heap = types.intern(
+            TypeKind::Class {
+                name: "HeapObject".into(),
+                parent: Some(object),
+                fields: vec![FieldInfo {
+                    name: "map".into(),
+                    ty: object,
+                    span: dummy,
+                }],
+            },
+            dummy,
+        );
+        let union = types.union_of(smi, heap, dummy);
+        types.get_mut(object).kind = TypeKind::Alias {
+            name: "Object".into(),
+            target: union,
+        };
+        let fields = types.fields_of(heap);
+        assert!(fields.iter().any(|field| field.name == "map"), "{fields:?}");
+        assert!(types.is_subtype(heap, object));
     }
 }

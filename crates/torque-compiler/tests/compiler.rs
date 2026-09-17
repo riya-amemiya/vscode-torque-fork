@@ -313,6 +313,36 @@ fn compile_json_returns_symbols_and_errors() {
     assert!(json.contains("fromStart") || json.contains("from_start") || json.contains("symbols"));
 }
 
+#[test]
+fn object_alias_to_heapobject_union_does_not_overflow() {
+    let source = r#"
+type Object = Smi | HeapObject;
+extern class HeapObject extends Object {
+  map: Map;
+}
+extern class Map extends HeapObject {}
+macro Main(x: HeapObject): Map {
+  return x.map;
+}
+"#;
+    let file = compile_one("memory://cycle.tq", source.trim());
+    assert!(
+        names(&file).iter().any(|name| name == "class:HeapObject"),
+        "{:?}",
+        names(&file)
+    );
+    let from = source.trim().rfind(".map").unwrap() as u32 + 1;
+    let hit = file
+        .definitions
+        .iter()
+        .find(|item| from >= item.from_start && from <= item.from_end);
+    assert!(
+        hit.is_some(),
+        "expected field jump, diags={:?}",
+        file.diagnostics
+    );
+}
+
 fn messages(file: &torque_compiler::FileAnalysis) -> Vec<String> {
     file.diagnostics
         .iter()

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { readFileSync } from "node:fs";
 import {
   CompletionItem,
   CompletionItemKind,
@@ -45,6 +46,7 @@ import { completionsFor, type CompletionKind } from "./language/complete";
 import { hoverFor } from "./language/hover";
 import { positionToOffset } from "./language/positions";
 import { TorqueWorkspace } from "./language/workspace";
+import { findTorqueRoot, listTorqueFiles } from "./language/workspace-files";
 
 const SELECTOR = { language: "torque", scheme: "file" };
 
@@ -168,29 +170,71 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     }
   };
 
-  const ingest = (document: TextDocument): void => {
-    if (document.languageId !== "torque") {
-      return;
-    }
-    store.set(document.uri.toString(), document.getText());
+  const rebuildAndPublish = (): void => {
+    store.rebuild();
     publishAll();
   };
 
-  for (const document of vsWorkspace.textDocuments) {
-    ingest(document);
-  }
+  let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleRebuild = (): void => {
+    if (rebuildTimer !== undefined) {
+      clearTimeout(rebuildTimer);
+    }
+    rebuildTimer = setTimeout(() => {
+      rebuildTimer = undefined;
+      rebuildAndPublish();
+    }, 200);
+  };
 
-  void vsWorkspace.findFiles("**/*.tq").then(async (files) => {
-    for (const file of files) {
-      if (store.get(file.toString()) !== undefined) {
+  const loadDiskFiles = (seedPath: string): void => {
+    const root = findTorqueRoot(seedPath);
+    if (root === undefined) {
+      return;
+    }
+    for (const fsPath of listTorqueFiles(root)) {
+      const uri = Uri.file(fsPath).toString();
+      if (store.hasSource(uri)) {
         continue;
       }
-      const bytes = await vsWorkspace.fs.readFile(file);
-      store.load(file.toString(), Buffer.from(bytes).toString("utf8"));
+      try {
+        store.load(uri, readFileSync(fsPath, "utf8"));
+      } catch {
+        continue;
+      }
     }
-    store.rebuild();
-    publishAll();
-  });
+  };
+
+  const ingest = (document: TextDocument, immediate = false): void => {
+    if (document.languageId !== "torque") {
+      return;
+    }
+    store.load(document.uri.toString(), document.getText());
+    if (document.uri.scheme === "file") {
+      loadDiskFiles(document.uri.fsPath);
+    }
+    if (immediate) {
+      rebuildAndPublish();
+      return;
+    }
+    scheduleRebuild();
+  };
+
+  for (const document of vsWorkspace.textDocuments) {
+    ingest(document, true);
+  }
+
+  void vsWorkspace
+    .findFiles("**/*.tq", "{**/out/**,**/node_modules/**,**/build/**}")
+    .then(async (files) => {
+      for (const file of files) {
+        if (store.hasSource(file.toString())) {
+          continue;
+        }
+        const bytes = await vsWorkspace.fs.readFile(file);
+        store.load(file.toString(), Buffer.from(bytes).toString("utf8"));
+      }
+      rebuildAndPublish();
+    });
 
   context.subscriptions.push(
     diagnostics,
@@ -203,9 +247,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
       SELECTOR,
       {
         provideCompletionItems(document, position) {
-          const analysis =
-            store.get(document.uri.toString()) ??
-            store.set(document.uri.toString(), document.getText());
+          const analysis = store.ensure(document.uri.toString(), document.getText());
           return completionsFor(analysis, offsetOf(analysis, position), store.all()).map((item) => {
             const completion = new CompletionItem(item.label, completionKind(item.kind));
             completion.detail = item.detail;
@@ -223,9 +265,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     ),
     languages.registerDefinitionProvider(SELECTOR, {
       async provideDefinition(document, position) {
-        const analysis =
-          store.get(document.uri.toString()) ??
-          store.set(document.uri.toString(), document.getText());
+        const analysis = store.ensure(document.uri.toString(), document.getText());
         const offset = offsetOf(analysis, position);
         const include = includeAt(analysis, offset);
         if (include !== undefined) {
@@ -251,9 +291,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     }),
     languages.registerHoverProvider(SELECTOR, {
       provideHover(document, position) {
-        const analysis =
-          store.get(document.uri.toString()) ??
-          store.set(document.uri.toString(), document.getText());
+        const analysis = store.ensure(document.uri.toString(), document.getText());
         const hover = hoverFor(analysis, offsetOf(analysis, position));
         if (hover === undefined) {
           return undefined;
@@ -266,9 +304,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     }),
     languages.registerDocumentSymbolProvider(SELECTOR, {
       provideDocumentSymbols(document) {
-        const analysis =
-          store.get(document.uri.toString()) ??
-          store.set(document.uri.toString(), document.getText());
+        const analysis = store.ensure(document.uri.toString(), document.getText());
         return analysis.symbols.map((symbol) => {
           const range = vscodeRange(symbolRange(analysis, symbol));
           return new DocumentSymbol(
