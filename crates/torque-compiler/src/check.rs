@@ -759,6 +759,13 @@ impl Checker {
                             None,
                         );
                     }
+                    if let Some(id) = self.types_by_name.get(&name.name).copied() {
+                        self.types.get_mut(id).kind = TypeKind::Struct {
+                            name: name.name.clone(),
+                            parent: None,
+                            fields: field_infos,
+                        };
+                    }
                     for method in methods {
                         self.bind_callable(method, Some(&name.name));
                     }
