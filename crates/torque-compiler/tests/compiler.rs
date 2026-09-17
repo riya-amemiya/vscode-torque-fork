@@ -336,7 +336,11 @@ macro Main(x: HeapObject): Map {
         .definitions
         .iter()
         .find(|item| from >= item.from_start && from <= item.from_end);
-    assert!(hit.is_some(), "expected field jump, diags={:?}", file.diagnostics);
+    assert!(
+        hit.is_some(),
+        "expected field jump, diags={:?}",
+        file.diagnostics
+    );
 }
 
 fn messages(file: &torque_compiler::FileAnalysis) -> Vec<String> {

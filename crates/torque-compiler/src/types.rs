@@ -384,10 +384,7 @@ mod tests {
             target: union,
         };
         let fields = types.fields_of(heap);
-        assert!(
-            fields.iter().any(|field| field.name == "map"),
-            "{fields:?}"
-        );
+        assert!(fields.iter().any(|field| field.name == "map"), "{fields:?}");
         assert!(types.is_subtype(heap, object));
     }
 }
