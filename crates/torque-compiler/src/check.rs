@@ -318,6 +318,7 @@ impl Checker {
         let arguments_ty = self.types.intern(
             TypeKind::Struct {
                 name: "Arguments".into(),
+                parent: None,
                 fields: vec![
                     FieldInfo {
                         name: "length".into(),
@@ -393,7 +394,17 @@ impl Checker {
                 let right_id = self.resolve_type_expr(right);
                 self.types.union_of(left_id, right_id, expr.span())
             }
-            TypeExpr::Function { result, .. } => self.resolve_type_expr(result),
+            TypeExpr::Function {
+                params,
+                result,
+                span,
+            } => {
+                let params: Vec<TypeId> =
+                    params.iter().map(|ty| self.resolve_type_expr(ty)).collect();
+                let result = self.resolve_type_expr(result);
+                self.types
+                    .intern(TypeKind::Function { params, result }, *span)
+            }
             TypeExpr::Reference {
                 inner,
                 mutable,
@@ -571,6 +582,7 @@ impl Checker {
                         &q,
                         TypeKind::Struct {
                             name: name.name.clone(),
+                            parent: None,
                             fields: Vec::new(),
                         },
                         name.span,
@@ -747,12 +759,6 @@ impl Checker {
                             None,
                         );
                     }
-                    if let Some(id) = self.types_by_name.get(&name.name).copied() {
-                        self.types.get_mut(id).kind = TypeKind::Struct {
-                            name: name.name.clone(),
-                            fields: field_infos,
-                        };
-                    }
                     for method in methods {
                         self.bind_callable(method, Some(&name.name));
                     }
@@ -764,7 +770,7 @@ impl Checker {
                     fields,
                     ..
                 } => {
-                    let _ = self.resolve_type_expr(extends);
+                    let parent = Some(self.resolve_type_expr(extends));
                     let mut field_infos = Vec::new();
                     for field in fields {
                         let ty = self.resolve_type_expr(&field.ty);
@@ -787,6 +793,7 @@ impl Checker {
                     if let Some(id) = self.types_by_name.get(&name.name).copied() {
                         self.types.get_mut(id).kind = TypeKind::Struct {
                             name: name.name.clone(),
+                            parent,
                             fields: field_infos,
                         };
                     }
@@ -918,7 +925,7 @@ impl Checker {
             generic_params: callable
                 .generic_params
                 .iter()
-                .map(|p| p.name.clone())
+                .map(|param| param.name.name.clone())
                 .collect(),
             param_types,
             return_type,
@@ -1367,8 +1374,8 @@ impl Checker {
                     && let Some(index) = indices.first()
                 {
                     let binding = self.bindings[*index].clone();
-                    self.define(name.span, binding.span, binding.uri);
-                    return binding.ty;
+                    self.define(name.span, binding.span, binding.uri.clone());
+                    return self.function_type_of(&binding);
                 }
                 if !namespace.is_empty()
                     && let Some(ty_id) = self.types_by_name.get(namespace.last().unwrap()).copied()
@@ -1504,9 +1511,11 @@ impl Checker {
                 }
                 id
             }
-            Expr::Deref { inner, .. } | Expr::Spread { inner, .. } => {
-                self.check_expr(inner, expected)
+            Expr::Deref { inner, .. } => {
+                let ty = self.check_expr(inner, None);
+                self.deref_type(ty)
             }
+            Expr::Spread { inner, .. } => self.check_expr(inner, expected),
             Expr::IncDec { target, .. } => self.check_expr(target, expected),
         }
     }
@@ -1592,7 +1601,7 @@ impl Checker {
             self.define(field.span, found.span, self.uri(found.span.file));
             return found.ty;
         }
-        if self.is_generic_param(recv) {
+        if self.is_opaque(recv) {
             return self.error_ty;
         }
         let dotted = format!(".{}", field.name);
@@ -1645,9 +1654,17 @@ impl Checker {
                 .find(|item| item.name == field.name)
             {
                 self.define(field.span, found.span, self.uri(found.span.file));
+                if found.indexed {
+                    return found.ty;
+                }
+                if let Some(ret) =
+                    self.try_resolve_call("[]", field.span, &[], &[found.ty, idx], span, None)
+                {
+                    return ret;
+                }
                 return found.ty;
             }
-            if self.is_generic_param(recv) {
+            if self.is_opaque(recv) {
                 return self.error_ty;
             }
             self.error(
@@ -1746,6 +1763,11 @@ impl Checker {
             return ret;
         }
         let short = name.rsplit("::").next().unwrap_or(name);
+        if let Some(binding) = self.lookup_value(short).cloned()
+            && let Some(ret) = self.function_result(binding.ty)
+        {
+            return ret;
+        }
         if matches!(short, "Cast" | "Convert" | "UnsafeCast" | "FromConstexpr") {
             if let Some(ty) = type_args.first() {
                 return *ty;
@@ -1903,20 +1925,21 @@ impl Checker {
         }
     }
 
-    fn push_generic_params(&mut self, params: &[Ident]) -> Vec<(String, Option<TypeId>)> {
+    fn push_generic_params(&mut self, params: &[GenericParam]) -> Vec<(String, Option<TypeId>)> {
         let mut saved = Vec::new();
         for param in params {
-            let previous = self.types_by_name.get(&param.name).copied();
-            saved.push((param.name.clone(), previous));
-            if let Some(existing) = previous
+            let previous = self.types_by_name.get(&param.name.name).copied();
+            saved.push((param.name.name.clone(), previous));
+            if !param.is_variable
+                && let Some(existing) = previous
                 && !matches!(self.types.get(existing).kind, TypeKind::GenericParam { .. })
             {
                 continue;
             }
             let id = self
                 .types
-                .intern_generic_param(param.name.clone(), param.span);
-            self.types_by_name.insert(param.name.clone(), id);
+                .intern_generic_param(param.name.name.clone(), param.name.span);
+            self.types_by_name.insert(param.name.name.clone(), id);
         }
         saved
     }
@@ -2146,12 +2169,20 @@ impl Checker {
         }
         seen.push(id);
         match &self.types.get(id).kind {
-            TypeKind::Applied { name, .. } => {
+            TypeKind::Applied { name, args } => {
                 let name = name.clone();
-                if let Some(base) = self.types_by_name.get(&name).copied() {
-                    return self.fields_of_walk(base, seen);
+                let args = args.clone();
+                let mut fields = if let Some(base) = self.types_by_name.get(&name).copied() {
+                    self.fields_of_walk(base, seen)
+                } else {
+                    Vec::new()
+                };
+                if fields.is_empty() {
+                    for arg in args {
+                        fields.extend(self.fields_of_walk(arg, seen));
+                    }
                 }
-                Vec::new()
+                fields
             }
             TypeKind::Abstract {
                 parent: Some(parent),
@@ -2166,7 +2197,15 @@ impl Checker {
                 all.extend(fields);
                 all
             }
-            TypeKind::Struct { fields, .. } => fields.clone(),
+            TypeKind::Struct { fields, parent, .. } => {
+                let parent = *parent;
+                let fields = fields.clone();
+                let mut all = parent
+                    .map(|p| self.fields_of_walk(p, seen))
+                    .unwrap_or_default();
+                all.extend(fields);
+                all
+            }
             TypeKind::Union { members } => {
                 let members = members.clone();
                 if members.is_empty() {
@@ -2201,6 +2240,58 @@ impl Checker {
 
     fn is_generic_param(&self, id: TypeId) -> bool {
         self.types.generic_param_name(id).is_some()
+    }
+
+    fn is_opaque(&self, id: TypeId) -> bool {
+        if self.is_generic_param(id) {
+            return true;
+        }
+        let id = self.types.unwrap_alias(id);
+        match &self.types.get(id).kind {
+            TypeKind::Abstract {
+                parent: None, name, ..
+            } => !PRELUDE_TYPES.contains(&name.as_str()),
+            _ => false,
+        }
+    }
+
+    fn deref_type(&self, ty: TypeId) -> TypeId {
+        let ty = self.types.unwrap_alias(ty);
+        if let TypeKind::Applied { name, args } = &self.types.get(ty).kind
+            && matches!(
+                name.as_str(),
+                "MutableReference" | "ConstReference" | "Reference"
+            )
+            && let Some(inner) = args.first()
+        {
+            return *inner;
+        }
+        ty
+    }
+
+    fn function_type_of(&mut self, binding: &Binding) -> TypeId {
+        let params = if binding.implicit_count <= binding.param_types.len() {
+            binding.param_types[binding.implicit_count..].to_vec()
+        } else {
+            binding.param_types.clone()
+        };
+        self.types.intern(
+            TypeKind::Function {
+                params,
+                result: binding.return_type,
+            },
+            binding.span,
+        )
+    }
+
+    fn function_result(&self, ty: TypeId) -> Option<TypeId> {
+        match &self.types.get(self.types.unwrap_alias(ty)).kind {
+            TypeKind::Function { result, .. } => Some(*result),
+            TypeKind::Abstract { name, .. } if name == "BuiltinPtr" => {
+                self.types_by_name.get("JSAny").copied()
+            }
+            _ => None,
+        }
     }
 
     fn check_address_of(&mut self, arg: &Expr, expected: Option<TypeId>, span: Span) -> TypeId {
@@ -2361,6 +2452,23 @@ impl Checker {
             if name == "Object" || name == "HeapObject" || name == "JSAny" {
                 return true;
             }
+        }
+        if let TypeKind::Function { .. } = &self.types.get(self.types.unwrap_alias(from)).kind {
+            let to_name = self.types.name_of(to);
+            if to_name == "BuiltinPtr" || to_name.starts_with("builtin(") {
+                return true;
+            }
+        }
+        if let TypeKind::Function { .. } = &self.types.get(self.types.unwrap_alias(to)).kind {
+            let from_name = self.types.name_of(from);
+            if from_name == "BuiltinPtr" || from_name.starts_with("builtin(") {
+                return true;
+            }
+        }
+        if self.types.name_of(from) == "Arguments"
+            && (self.js_value_like(to) || self.types.name_of(to) == "Object")
+        {
+            return true;
         }
         false
     }

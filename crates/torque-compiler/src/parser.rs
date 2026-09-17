@@ -241,7 +241,7 @@ impl<'a> Parser<'a> {
         args
     }
 
-    fn parse_generic_params(&mut self) -> Vec<Ident> {
+    fn parse_generic_params(&mut self) -> Vec<GenericParam> {
         if !self.eat("<") {
             return Vec::new();
         }
@@ -250,13 +250,19 @@ impl<'a> Parser<'a> {
         } else {
             self.comma_separated(|parser| {
                 let ty = parser.parse_type()?;
+                let mut is_variable = false;
                 if parser.eat(":") {
                     parser.eat("type");
+                    is_variable = true;
                 }
                 if parser.eat("extends") {
                     let _ = parser.parse_type();
+                    is_variable = true;
                 }
-                Some(type_expr_as_ident(&ty))
+                Some(GenericParam {
+                    name: type_expr_as_ident(&ty),
+                    is_variable,
+                })
             })
         };
         self.expect(">");

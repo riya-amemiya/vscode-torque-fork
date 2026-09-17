@@ -51,7 +51,12 @@ pub enum TypeKind {
     },
     Struct {
         name: String,
+        parent: Option<TypeId>,
         fields: Vec<FieldInfo>,
+    },
+    Function {
+        params: Vec<TypeId>,
+        result: TypeId,
     },
     Enum {
         name: String,
@@ -101,6 +106,19 @@ impl TypeStore {
                 span,
             });
             return TypeId((self.types.len() - 1) as u32);
+        }
+        if let TypeKind::Function { params, result } = &kind {
+            for (index, existing) in self.types.iter().enumerate() {
+                if let TypeKind::Function {
+                    params: existing_params,
+                    result: existing_result,
+                } = &existing.kind
+                    && existing_params == params
+                    && existing_result == result
+                {
+                    return TypeId(index as u32);
+                }
+            }
         }
         if let TypeKind::Applied { name, args } = &kind {
             for (index, existing) in self.types.iter().enumerate() {
@@ -188,6 +206,14 @@ impl TypeStore {
             | TypeKind::Struct { name, .. }
             | TypeKind::Enum { name, .. }
             | TypeKind::GenericParam { name } => name.clone(),
+            TypeKind::Function { params, result } => {
+                let inner = params
+                    .iter()
+                    .map(|id| self.name_of(*id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("builtin({}) => {}", inner, self.name_of(*result))
+            }
             TypeKind::Union { members } => members
                 .iter()
                 .map(|id| self.name_of(*id))
@@ -250,6 +276,13 @@ impl TypeStore {
                 .clone()
                 .into_iter()
                 .any(|arg| self.mentions_generic(arg, name)),
+            TypeKind::Function { params, result } => {
+                params
+                    .clone()
+                    .into_iter()
+                    .any(|param| self.mentions_generic(param, name))
+                    || self.mentions_generic(*result, name)
+            }
             TypeKind::Union { members } => members
                 .clone()
                 .into_iter()
@@ -361,6 +394,7 @@ impl TypeStore {
             current = match &self.get(id).kind {
                 TypeKind::Abstract { parent, .. }
                 | TypeKind::Class { parent, .. }
+                | TypeKind::Struct { parent, .. }
                 | TypeKind::Enum { parent, .. } => *parent,
                 _ => None,
             };
@@ -393,7 +427,15 @@ impl TypeStore {
                 all.extend(fields);
                 all
             }
-            TypeKind::Struct { fields, .. } => fields.clone(),
+            TypeKind::Struct { fields, parent, .. } => {
+                let parent = *parent;
+                let fields = fields.clone();
+                let mut all = parent
+                    .map(|p| self.fields_of_rec(p, seen))
+                    .unwrap_or_default();
+                all.extend(fields);
+                all
+            }
             TypeKind::Union { members } => {
                 let members = members.clone();
                 if members.is_empty() {

@@ -1366,6 +1366,102 @@ macro InitContextSlot<
     );
 }
 
+#[test]
+fn deref_of_native_context_slot_is_the_slot_type() {
+    let source = r#"
+type Slot<Container: type, T: type> extends intptr;
+extern enum ContextSlot extends intptr {
+  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>,
+}
+macro NativeContextSlot<C: type, T: type>(
+    implicit context: C)(index: Slot<NativeContext, T>):&T {
+  return %RawDownCast<&T>(index);
+}
+macro Main(implicit context: Context)(): JSFunction {
+  return *NativeContextSlot(ContextSlot::PROMISE_FUNCTION_INDEX);
+}
+"#;
+    let file = compile_one("memory://deref-slot.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("not assignable") || item.contains("NativeContextSlot")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn function_pointers_and_builtin_aliases_typecheck() {
+    let source = r#"
+type BuiltinPtr extends Smi generates 'BuiltinPtr';
+type ObjectToObject = builtin(Context, JSAny) => JSAny;
+builtin TestHelperPlus1(x: Smi): Smi {
+  return x;
+}
+macro TestFunctionPointers(): Smi {
+  let fptr: builtin(Smi) => Smi = TestHelperPlus1;
+  return fptr(42);
+}
+macro TestTypeAlias(x: ObjectToObject): BuiltinPtr {
+  return x;
+}
+"#;
+    let file = compile_one("memory://fnptr.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("fptr")
+            || item.contains("not assignable")
+            || item.contains("BuiltinPtr")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn bitfield_structs_convert_to_their_parent_word() {
+    let source = r#"
+extern macro Signed(uint32): int32;
+bitfield struct Flags extends uint32 {
+  a: bool: 1 bit;
+  b: uint32: 8 bit;
+}
+macro Main(f: Flags): int32 {
+  return Signed(f);
+}
+"#;
+    let file = compile_one("memory://bitfield-signed.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Signed") || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn smi_tagged_bitfields_expose_flag_fields() {
+    let source = r#"
+@useParentTypeChecker type SmiTagged<T: type extends uint31> extends Smi;
+bitfield struct JSPromiseFlags extends uint31 {
+  status: uint32: 2 bit;
+  has_handler: bool: 1 bit;
+}
+extern class JSPromise extends JSObject {
+  flags: SmiTagged<JSPromiseFlags>;
+}
+macro Status(p: JSPromise): uint32 {
+  return p.flags.status;
+}
+"#;
+    let file = compile_one("memory://smi-tagged.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("has no field")),
+        "{messages:?}"
+    );
+}
+
 fn compile_v8_tree() -> Option<torque_compiler::CompileResult> {
     let root = std::path::Path::new("/tmp/v8-full-tq");
     if !root.exists() {
