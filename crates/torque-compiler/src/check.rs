@@ -2852,12 +2852,8 @@ impl Checker {
                 return true;
             }
         }
-        if self.types.name_of(from) == "Arguments"
+        self.types.name_of(from) == "Arguments"
             && (self.js_value_like(to) || self.types.name_of(to) == "Object")
-        {
-            return true;
-        }
-        false
     }
 
     fn comparable(&mut self, left: TypeId, right: TypeId) -> bool {
