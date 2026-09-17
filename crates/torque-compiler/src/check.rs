@@ -1595,11 +1595,7 @@ impl Checker {
         if self.types.is_error(recv) {
             return self.error_ty;
         }
-        if let Some(found) = self
-            .fields_of(recv)
-            .into_iter()
-            .find(|item| item.name == field.name)
-        {
+        if let Some(found) = self.lookup_field(recv, &field.name) {
             self.define(field.span, found.span, self.uri(found.span.file));
             return found.ty;
         }
@@ -1650,11 +1646,7 @@ impl Checker {
             {
                 return ret;
             }
-            if let Some(found) = self
-                .fields_of(recv)
-                .into_iter()
-                .find(|item| item.name == field.name)
-            {
+            if let Some(found) = self.lookup_field(recv, &field.name) {
                 self.define(field.span, found.span, self.uri(found.span.file));
                 if found.indexed {
                     return found.ty;
@@ -2167,6 +2159,7 @@ impl Checker {
         } else {
             2
         };
+        let any_error_arg = arg_types.iter().any(|arg| self.types.is_error(*arg));
         for (arg, param) in arg_types.iter().zip(params.iter()) {
             if self.types.is_error(*arg) {
                 continue;
@@ -2184,21 +2177,29 @@ impl Checker {
             }
         }
         if inferred.iter().any(Option::is_none) {
-            for (index, found) in inferred.iter().enumerate() {
-                if found.is_some() {
-                    continue;
+            if any_error_arg {
+                for slot in inferred.iter_mut() {
+                    if slot.is_none() {
+                        *slot = Some(self.error_ty);
+                    }
                 }
-                let Some(name) = candidate.generic_params.get(index) else {
-                    continue;
-                };
-                if params
-                    .iter()
-                    .any(|param| self.types.mentions_generic(*param, name))
-                    || self.types.mentions_generic(candidate.return_type, name)
-                {
-                    return CallMatch::InferFail(
-                        "failed to infer arguments for all type parameters".into(),
-                    );
+            } else {
+                for (index, found) in inferred.iter().enumerate() {
+                    if found.is_some() {
+                        continue;
+                    }
+                    let Some(name) = candidate.generic_params.get(index) else {
+                        continue;
+                    };
+                    if params
+                        .iter()
+                        .any(|param| self.types.mentions_generic(*param, name))
+                        || self.types.mentions_generic(candidate.return_type, name)
+                    {
+                        return CallMatch::InferFail(
+                            "failed to infer arguments for all type parameters".into(),
+                        );
+                    }
                 }
             }
         }
@@ -2207,7 +2208,7 @@ impl Checker {
     }
 
     fn types_unify(
-        &self,
+        &mut self,
         arg: TypeId,
         param: TypeId,
         candidate: &Binding,
@@ -2216,6 +2217,14 @@ impl Checker {
         let arg = self.types.unwrap_alias(arg);
         let param = self.types.unwrap_alias(param);
         if self.types.is_error(arg) || self.types.is_error(param) {
+            if let Some(name) = self.types.generic_param_name(param)
+                && let Some(index) = candidate
+                    .generic_params
+                    .iter()
+                    .position(|item| item == name)
+            {
+                self.unify_inferred(&mut inferred[index], arg)?;
+            }
             return Ok(true);
         }
         if let Some(name) = self.types.generic_param_name(param)
@@ -2236,23 +2245,39 @@ impl Checker {
                 args: param_args,
             } = &self.types.get(param).kind
         {
-            if arg_name != param_name || arg_args.len() != param_args.len() {
-                return Ok(false);
-            }
+            let same_ctor = arg_name == param_name && arg_args.len() == param_args.len();
             let arg_args = arg_args.clone();
             let param_args = param_args.clone();
-            for (left, right) in arg_args.into_iter().zip(param_args) {
-                if !self.types_unify(left, right, candidate, inferred)? {
-                    return Ok(false);
+            if same_ctor {
+                for (left, right) in arg_args.into_iter().zip(param_args) {
+                    if !self.types_unify(left, right, candidate, inferred)? {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
+            if arg_args.len() == param_args.len()
+                && (self.reference_rank(arg).is_some() && self.reference_rank(param).is_some()
+                    || self.slice_like(arg) && self.slice_like(param))
+            {
+                for (left, right) in arg_args.into_iter().zip(param_args) {
+                    let _ = self.types_unify(left, right, candidate, inferred)?;
                 }
             }
-            return Ok(true);
+            return Ok(self.can_convert(arg, param));
         }
         Ok(self.can_convert(arg, param))
     }
 
-    fn unify_inferred(&self, slot: &mut Option<TypeId>, incoming: TypeId) -> Result<(), String> {
+    fn unify_inferred(
+        &mut self,
+        slot: &mut Option<TypeId>,
+        incoming: TypeId,
+    ) -> Result<(), String> {
         if self.types.is_error(incoming) {
+            if slot.is_none() {
+                *slot = Some(self.error_ty);
+            }
             return Ok(());
         }
         match *slot {
@@ -2312,6 +2337,28 @@ impl Checker {
         ty
     }
 
+    fn lookup_field(&self, recv: TypeId, name: &str) -> Option<FieldInfo> {
+        let mut current = recv;
+        for _ in 0..4 {
+            if let Some(found) = self
+                .fields_of(current)
+                .into_iter()
+                .find(|item| item.name == name)
+            {
+                return Some(found);
+            }
+            if self.reference_rank(current).is_none() {
+                break;
+            }
+            let inner = self.deref_type(current);
+            if inner == current {
+                break;
+            }
+            current = inner;
+        }
+        None
+    }
+
     fn fields_of(&self, id: TypeId) -> Vec<FieldInfo> {
         let mut seen = Vec::new();
         self.fields_of_walk(id, &mut seen)
@@ -2363,12 +2410,19 @@ impl Checker {
             }
             TypeKind::Union { members } => {
                 let members = members.clone();
-                if members.is_empty() {
-                    return Vec::new();
+                let mut nonempty = Vec::new();
+                for member in members {
+                    let mut member_seen = seen.clone();
+                    let fields = self.fields_of_walk(member, &mut member_seen);
+                    if !fields.is_empty() {
+                        nonempty.push(fields);
+                    }
                 }
-                let mut common = self.fields_of_walk(members[0], seen);
-                for member in &members[1..] {
-                    let fields = self.fields_of_walk(*member, seen);
+                let Some((first, rest)) = nonempty.split_first() else {
+                    return Vec::new();
+                };
+                let mut common = first.clone();
+                for fields in rest {
                     common.retain(|field| fields.iter().any(|other| other.name == field.name));
                 }
                 common
@@ -2456,11 +2510,7 @@ impl Checker {
                 if self.types.is_error(recv) {
                     return self.error_ty;
                 }
-                if let Some(found) = self
-                    .fields_of(recv)
-                    .into_iter()
-                    .find(|item| item.name == field.name)
-                {
+                if let Some(found) = self.lookup_field(recv, &field.name) {
                     self.define(field.span, found.span, self.uri(found.span.file));
                     if found.indexed {
                         return self.apply_named_with_expected(
@@ -2537,29 +2587,174 @@ impl Checker {
         )
     }
 
-    fn can_convert(&self, from: TypeId, to: TypeId) -> bool {
+    fn slice_like(&self, id: TypeId) -> bool {
+        match &self.types.get(self.types.unwrap_alias(id)).kind {
+            TypeKind::Applied { name, .. } => {
+                matches!(name.as_str(), "Slice" | "MutableSlice" | "ConstSlice")
+            }
+            _ => false,
+        }
+    }
+
+    fn type_parent(&self, id: TypeId) -> Option<TypeId> {
+        match &self.types.get(self.types.unwrap_alias(id)).kind {
+            TypeKind::Abstract { parent, .. }
+            | TypeKind::Class { parent, .. }
+            | TypeKind::Struct { parent, .. }
+            | TypeKind::Enum { parent, .. } => *parent,
+            _ => None,
+        }
+    }
+
+    fn collect_generic_names(&self, ty: TypeId, names: &mut Vec<String>) {
+        let ty = self.types.unwrap_alias(ty);
+        match &self.types.get(ty).kind {
+            TypeKind::GenericParam { name } => {
+                if !names.iter().any(|item| item == name) {
+                    names.push(name.clone());
+                }
+            }
+            TypeKind::Applied { args, .. } => {
+                for arg in args.clone() {
+                    self.collect_generic_names(arg, names);
+                }
+            }
+            TypeKind::Union { members } => {
+                for member in members.clone() {
+                    self.collect_generic_names(member, names);
+                }
+            }
+            TypeKind::Function { params, result } => {
+                for param in params.clone() {
+                    self.collect_generic_names(param, names);
+                }
+                self.collect_generic_names(*result, names);
+            }
+            _ => {}
+        }
+    }
+
+    fn substitute_named_params(
+        &mut self,
+        ty: TypeId,
+        params: &[String],
+        args: &[TypeId],
+    ) -> TypeId {
+        let ty = self.types.unwrap_alias(ty);
+        if let Some(name) = self.types.generic_param_name(ty)
+            && let Some(index) = params.iter().position(|item| item == name)
+            && let Some(found) = args.get(index).copied()
+        {
+            return found;
+        }
+        if let TypeKind::Applied { name, args: inner } = &self.types.get(ty).kind {
+            let name = name.clone();
+            let inner = inner.clone();
+            let mapped: Vec<TypeId> = inner
+                .into_iter()
+                .map(|arg| self.substitute_named_params(arg, params, args))
+                .collect();
+            return self.types.intern_applied(name, mapped, Span::dummy());
+        }
+        if let TypeKind::Union { members } = &self.types.get(ty).kind {
+            let members = members.clone();
+            let mut result = self.never_ty;
+            for member in members {
+                let mapped = self.substitute_named_params(member, params, args);
+                result = self.types.union_of(result, mapped, Span::dummy());
+            }
+            return result;
+        }
+        ty
+    }
+
+    fn substituted_parent(&mut self, id: TypeId) -> Option<TypeId> {
+        let id = self.types.unwrap_alias(id);
+        if let TypeKind::Applied { name, args } = &self.types.get(id).kind {
+            let name = name.clone();
+            let args = args.clone();
+            let base = self.types_by_name.get(&name).copied()?;
+            let parent = self.type_parent(base)?;
+            if parent == id || parent == base {
+                return None;
+            }
+            let mut params = match &self.types.get(base).kind {
+                TypeKind::Struct { generic_params, .. } => generic_params.clone(),
+                _ => Vec::new(),
+            };
+            if params.is_empty() {
+                self.collect_generic_names(parent, &mut params);
+            }
+            if params.is_empty() {
+                return Some(parent);
+            }
+            return Some(self.substitute_named_params(parent, &params, &args));
+        }
+        self.type_parent(id)
+    }
+
+    fn can_convert(&mut self, from: TypeId, to: TypeId) -> bool {
+        self.can_convert_limited(from, to, 0)
+    }
+
+    fn can_convert_limited(&mut self, from: TypeId, to: TypeId, depth: u8) -> bool {
+        if depth > 16 {
+            return false;
+        }
         if self.types.is_subtype(from, to) {
             return true;
         }
         if self.types.is_never(from) || self.types.name_of(from) == "never" {
             return true;
         }
+        if let (
+            TypeKind::Applied {
+                name: from_name,
+                args: from_args,
+            },
+            TypeKind::Applied {
+                name: to_name,
+                args: to_args,
+            },
+        ) = (
+            &self.types.get(self.types.unwrap_alias(from)).kind,
+            &self.types.get(self.types.unwrap_alias(to)).kind,
+        ) && from_name == to_name
+            && from_args.len() == to_args.len()
+        {
+            let from_args = from_args.clone();
+            let to_args = to_args.clone();
+            if from_args
+                .iter()
+                .zip(to_args.iter())
+                .all(|(left, right)| self.can_convert_limited(*left, *right, depth + 1))
+            {
+                return true;
+            }
+        }
         if let TypeKind::Union { members } = &self.types.get(self.types.unwrap_alias(from)).kind {
             let members = members.clone();
-            if !members.is_empty() && members.iter().all(|member| self.can_convert(*member, to)) {
+            if !members.is_empty()
+                && members
+                    .iter()
+                    .all(|member| self.can_convert_limited(*member, to, depth + 1))
+            {
                 return true;
             }
         }
         if let TypeKind::Union { members } = &self.types.get(self.types.unwrap_alias(to)).kind {
             let members = members.clone();
-            if members.iter().any(|member| self.can_convert(from, *member)) {
+            if members
+                .iter()
+                .any(|member| self.can_convert_limited(from, *member, depth + 1))
+            {
                 return true;
             }
         }
         if let (Some((from_rank, from_arg)), Some((to_rank, to_arg))) =
             (self.reference_rank(from), self.reference_rank(to))
             && from_rank <= to_rank
-            && self.can_convert(from_arg, to_arg)
+            && self.can_convert_limited(from_arg, to_arg, depth + 1)
         {
             return true;
         }
@@ -2592,19 +2787,29 @@ impl Checker {
         }
         if let TypeKind::Applied { name, .. } = &self.types.get(self.types.unwrap_alias(from)).kind
             && let Some(base) = self.types_by_name.get(name).copied()
-            && self.can_convert(base, to)
+            && self.can_convert_limited(base, to, depth + 1)
         {
             return true;
         }
-        if let TypeKind::Abstract {
-            parent: Some(parent),
-            ..
-        } = &self.types.get(self.types.unwrap_alias(from)).kind
+        if self.is_applied(from)
+            && let Some(parent) = self.substituted_parent(from)
+            && parent != from
+            && self.can_convert_limited(parent, to, depth + 1)
         {
-            let parent = *parent;
-            if parent != from && self.can_convert(parent, to) {
-                return true;
-            }
+            return true;
+        }
+        if self.is_applied(to)
+            && let Some(parent) = self.substituted_parent(to)
+            && parent != to
+            && self.can_convert_limited(from, parent, depth + 1)
+        {
+            return true;
+        }
+        if let Some(parent) = self.type_parent(from)
+            && parent != from
+            && self.can_convert_limited(parent, to, depth + 1)
+        {
+            return true;
         }
         if self.types.generic_param_name(from).is_some()
             || self.types.generic_param_name(to).is_some()
@@ -2618,11 +2823,7 @@ impl Checker {
         {
             return true;
         }
-        if self.types.numeric_like(from)
-            && self.types.numeric_like(to)
-            && !self.types.is_constexpr(from)
-            && !self.types.is_constexpr(to)
-        {
+        if self.types.numeric_like(from) && self.types.numeric_like(to) {
             return true;
         }
         if self.types.is_constexpr(to)
@@ -2659,11 +2860,25 @@ impl Checker {
         false
     }
 
-    fn comparable(&self, left: TypeId, right: TypeId) -> bool {
-        self.can_convert(left, right)
-            || self.can_convert(right, left)
-            || (self.types.numeric_like(left) && self.types.numeric_like(right))
-            || (self.js_value_like(left) && self.js_value_like(right))
+    fn comparable(&mut self, left: TypeId, right: TypeId) -> bool {
+        if self.can_convert(left, right) || self.can_convert(right, left) {
+            return true;
+        }
+        if self.types.numeric_like(left) && self.types.numeric_like(right) {
+            return true;
+        }
+        if self.js_value_like(left) && self.js_value_like(right) {
+            return true;
+        }
+        for name in ["HeapObject", "Object"] {
+            if let Some(root) = self.types_by_name.get(name).copied()
+                && self.types.is_subtype(left, root)
+                && self.types.is_subtype(right, root)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn is_jsany(&self, id: TypeId) -> bool {

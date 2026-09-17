@@ -439,12 +439,19 @@ impl TypeStore {
             }
             TypeKind::Union { members } => {
                 let members = members.clone();
-                if members.is_empty() {
-                    return Vec::new();
+                let mut nonempty = Vec::new();
+                for member in members {
+                    let mut member_seen = seen.clone();
+                    let fields = self.fields_of_rec(member, &mut member_seen);
+                    if !fields.is_empty() {
+                        nonempty.push(fields);
+                    }
                 }
-                let mut common = self.fields_of_rec(members[0], seen);
-                for member in &members[1..] {
-                    let fields = self.fields_of_rec(*member, seen);
+                let Some((first, rest)) = nonempty.split_first() else {
+                    return Vec::new();
+                };
+                let mut common = first.clone();
+                for fields in rest {
                     common.retain(|field| fields.iter().any(|other| other.name == field.name));
                 }
                 common
@@ -460,7 +467,11 @@ impl TypeStore {
         if self.is_integer_literal(id) {
             return true;
         }
-        let name = self.name_of(id);
+        let id = self.unwrap_alias(id);
+        if let TypeKind::Applied { .. } = &self.get(id).kind {
+            return false;
+        }
+        let name = self.base_name(id);
         const NAMES: &[&str] = &[
             "Smi",
             "Number",
@@ -477,13 +488,36 @@ impl TypeStore {
             "uint64",
             "IntegerLiteral",
         ];
-        NAMES
-            .iter()
-            .any(|n| name == *n || name == format!("constexpr {n}"))
-            || name.contains("int")
-            || name.contains("float")
-            || name.contains("Smi")
-            || name.contains("Number")
+        if NAMES.iter().any(|n| name == *n)
+            || name.starts_with("int")
+            || name.starts_with("uint")
+            || name.starts_with("float")
+            || name.starts_with("char")
+            || name.ends_with("Smi")
+            || name.ends_with("Number")
+            || name.contains("Integer")
+        {
+            return true;
+        }
+        match &self.get(id).kind {
+            TypeKind::Abstract {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Class {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Struct {
+                parent: Some(parent),
+                ..
+            }
+            | TypeKind::Enum {
+                parent: Some(parent),
+                ..
+            } if *parent != id => self.numeric_like(*parent),
+            _ => false,
+        }
     }
 }
 

@@ -343,8 +343,14 @@ impl<'a> Parser<'a> {
             Some(())
         };
         let _ = mutable;
-        let is_constexpr = self.eat("constexpr");
-        let (namespace, name) = self.parse_namespace_and_name();
+        let mut is_constexpr = self.eat("constexpr");
+        let (namespace, mut name) = self.parse_namespace_and_name();
+        if name.name == "constexpr" {
+            is_constexpr = true;
+            if let Some(next) = self.parse_name() {
+                name = next;
+            }
+        }
         if name.name.is_empty() {
             return None;
         }

@@ -1462,6 +1462,220 @@ macro Status(p: JSPromise): uint32 {
     );
 }
 
+fn assert_no_frontend_noise(file: &torque_compiler::FileAnalysis) {
+    let messages = messages(file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected '>'")
+            || item.contains("has no field")
+            || item.contains("Cannot find matching callable")
+            || item.contains("Cannot compare")
+            || item.contains("failed to infer")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn namespaced_constexpr_type_in_generic_args_parses() {
+    let source = r#"
+namespace string {
+  type TrimMode extends int32 constexpr 'String::TrimMode';
+}
+FromConstexpr<string::TrimMode, string::constexpr TrimMode>(
+    c: string::constexpr TrimMode): string::TrimMode {
+  return c;
+}
+"#;
+    let file = compile_one("memory://constexpr-ns.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected '>'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn mutable_reference_converts_to_const_reference_for_unsafe_const_cast() {
+    let source = r#"
+struct Reference<T: type> {
+  const object: HeapObject;
+  const offset: intptr;
+}
+type ConstReference<T: type> extends Reference<T>;
+type MutableReference<T: type> extends ConstReference<T>;
+macro UnsafeConstCast<T: type>(r: const &T):&T {
+  return %RawDownCast<&T>(r);
+}
+extern class SeqOneByteString extends HeapObject {
+  chars[length]: char8;
+}
+macro Write(s: SeqOneByteString): void {
+  *UnsafeConstCast(&s.chars[0]) = 45;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://unsafe-const-cast.tq", source.trim()));
+}
+
+#[test]
+fn field_access_auto_derefs_references() {
+    let source = r#"
+struct DescriptorEntry {
+  key: Name;
+  details: Smi;
+}
+extern class DescriptorArray extends HeapObject {
+  descriptors[number_of_all_descriptors]: DescriptorEntry;
+}
+macro Check(descriptors: DescriptorArray): Smi {
+  const descriptor:&DescriptorEntry = &descriptors.descriptors[0];
+  const k = descriptor->key;
+  return UnsafeCast<Smi>(descriptor->details);
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://ref-fields.tq", source.trim()));
+}
+
+#[test]
+fn heap_object_unions_expose_common_parent_fields() {
+    let source = r#"
+extern class HeapObject extends Object {
+  const map: Map;
+}
+extern class JSReceiver extends HeapObject {}
+extern class JSFunction extends JSReceiver {}
+extern class JSBoundFunction extends JSReceiver {}
+extern class JSWrappedFunction extends JSReceiver {}
+extern class HeapNumber extends HeapObject {}
+extern class BigInt extends HeapObject {}
+type JSAnyNotNumeric = String|JSReceiver;
+type JSAnyNotNumber = BigInt|JSAnyNotNumeric;
+type JSAnyNotSmi = JSAnyNotNumber|HeapNumber;
+macro Maps(fn: JSBoundFunction|JSWrappedFunction|JSFunction, x: JSAnyNotSmi): Map {
+  const a = fn.map;
+  return x.map;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://union-map.tq", source.trim()));
+}
+
+#[test]
+fn union_with_generic_member_keeps_concrete_fields() {
+    let source = r#"
+extern class FixedArrayBase extends HeapObject {
+  length: intptr;
+}
+extern class FixedArray extends FixedArrayBase {}
+type EmptyFixedArray extends FixedArray;
+macro Len<FixedArrayType : type extends FixedArrayBase>(
+    a: FixedArrayType|EmptyFixedArray): intptr {
+  return a.length;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://union-generic.tq", source.trim()));
+}
+
+#[test]
+fn shape_unions_expose_parent_elements() {
+    let source = r#"
+extern class JSObject extends JSReceiver {
+  elements: FixedArrayBase;
+}
+extern class JSArgumentsObject extends JSObject {}
+extern shape JSSloppyArgumentsObject extends JSArgumentsObject {
+  length: JSAny;
+}
+extern shape JSStrictArgumentsObject extends JSArgumentsObject {
+  length: JSAny;
+}
+type JSArgumentsObjectWithLength =
+    JSSloppyArgumentsObject|JSStrictArgumentsObject;
+macro Elems(args: JSArgumentsObjectWithLength): FixedArrayBase {
+  return args.elements;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://shape-union.tq", source.trim()));
+}
+
+#[test]
+fn mutable_slice_matches_const_slice_params() {
+    let source = r#"
+struct Slice<T: type, Reference: type> {
+  const object: HeapObject;
+  const offset: intptr;
+  const length: intptr;
+}
+type MutableSlice<T: type> extends Slice<T, &T>;
+type ConstSlice<T: type> extends Slice<T, const &T>;
+macro LocaleCompareFastPath<T1: type, T2: type>(
+    left: ConstSlice<T1>, right: ConstSlice<T2>): Number labels Bailout {
+  return 0;
+}
+extern class SeqOneByteString extends HeapObject {
+  chars[length]: char8;
+}
+macro Subslice<T: type>(
+    slice: MutableSlice<T>, start: intptr, length: intptr): MutableSlice<T>
+    labels OutOfBounds {
+  return slice;
+}
+macro Compare(left: SeqOneByteString, right: SeqOneByteString): Number
+    labels Bailout {
+  const leftSlice = Subslice(&left.chars, 0, 1) otherwise Bailout;
+  const rightSlice = Subslice(&right.chars, 0, 1) otherwise Bailout;
+  return LocaleCompareFastPath(leftSlice, rightSlice) otherwise Bailout;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://slice-convert.tq", source.trim()));
+}
+
+#[test]
+fn intptr_matches_constexpr_int32_extern_macro() {
+    let source = r#"
+extern macro CodeStubAssembler::AllocateSwissNameDictionary(constexpr int32):
+    SwissNameDictionary;
+macro Alloc(n: intptr): SwissNameDictionary {
+  return AllocateSwissNameDictionary(n);
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://swiss-dict.tq", source.trim()));
+}
+
+#[test]
+fn heap_object_subclasses_are_comparable() {
+    let source = r#"
+extern class WasmFuncRef extends HeapObject {}
+extern class WasmNull extends HeapObject {}
+extern macro WasmNullConstant(): WasmNull;
+const kWasmNull: WasmNull = WasmNullConstant();
+macro Check(value: WasmFuncRef): bool {
+  return value == kWasmNull;
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://wasm-cmp.tq", source.trim()));
+}
+
+#[test]
+fn reference_cast_infers_when_receiver_is_generic() {
+    let source = r#"
+struct Reference<T: type> {
+  const object: HeapObject;
+  const offset: intptr;
+}
+type MutableReference<T: type> extends Reference<T>;
+extern class Context extends HeapObject {
+  elements[length]: Object;
+}
+macro ReferenceCast<T: type, U: type>(ref:&U):&T {
+  return ref;
+}
+macro ContextSlot<ArgumentContext: type, AnnotatedContext: type, T: type>(
+    context: ArgumentContext, index: intptr):&T {
+  const context: AnnotatedContext = context;
+  return ReferenceCast<T>(&context.elements[index]);
+}
+"#;
+    assert_no_frontend_noise(&compile_one("memory://refcast.tq", source.trim()));
+}
+
 fn compile_v8_tree() -> Option<torque_compiler::CompileResult> {
     let root = std::path::Path::new("/tmp/v8-full-tq");
     if !root.exists() {
@@ -1508,5 +1722,36 @@ fn dump_real_workspace_has_no_diagnostics() {
         "remaining diagnostics ({}) {:?}",
         leftovers.len(),
         leftovers.iter().take(40).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn dump_real_workspace_has_cross_file_definitions() {
+    let Some(result) = compile_v8_tree() else {
+        return;
+    };
+    let mut cross = 0usize;
+    let mut sample = None;
+    for file in &result.files {
+        for definition in &file.definitions {
+            if definition.to_uri != file.uri {
+                cross += 1;
+                if sample.is_none() {
+                    sample = Some((
+                        file.uri.rsplit('/').next().unwrap_or(&file.uri).to_string(),
+                        definition
+                            .to_uri
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&definition.to_uri)
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        cross > 0,
+        "expected cross-file definition mappings, sample={sample:?}"
     );
 }
