@@ -633,7 +633,12 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
             if depth <= 0 {
-                ok = self.at("(") || self.at("{");
+                ok = self.at("(")
+                    || self.at("{")
+                    || self.at(";")
+                    || self.at(",")
+                    || self.at(")")
+                    || self.at("]");
                 break;
             }
         }

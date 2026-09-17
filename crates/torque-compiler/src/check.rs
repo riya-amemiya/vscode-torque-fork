@@ -333,6 +333,7 @@ impl Checker {
                         indexed: false,
                     },
                 ],
+                generic_params: Vec::new(),
             },
             Span::dummy(),
         );
@@ -584,6 +585,7 @@ impl Checker {
                             name: name.name.clone(),
                             parent: None,
                             fields: Vec::new(),
+                            generic_params: Vec::new(),
                         },
                         name.span,
                     );
@@ -764,6 +766,10 @@ impl Checker {
                             name: name.name.clone(),
                             parent: None,
                             fields: field_infos,
+                            generic_params: generic_params
+                                .iter()
+                                .map(|param| param.name.name.clone())
+                                .collect(),
                         };
                     }
                     for method in methods {
@@ -802,6 +808,7 @@ impl Checker {
                             name: name.name.clone(),
                             parent,
                             fields: field_infos,
+                            generic_params: Vec::new(),
                         };
                     }
                 }
@@ -1441,19 +1448,7 @@ impl Checker {
                 let arg_types: Vec<TypeId> =
                     args.iter().map(|arg| self.check_expr(arg, None)).collect();
                 self.check_otherwise(otherwise);
-                if let Some(ret) = self.try_resolve_call(
-                    &method.name,
-                    method.span,
-                    &[],
-                    &arg_types,
-                    *span,
-                    expected,
-                ) {
-                    return ret;
-                }
-                let mut ufcs = vec![recv];
-                ufcs.extend_from_slice(&arg_types);
-                self.resolve_call(&method.name, method.span, &[], &ufcs, *span, expected)
+                self.resolve_method(recv, &method.name, method.span, &arg_types, *span, expected)
             }
             Expr::IntrinsicCall {
                 name,
@@ -1755,6 +1750,152 @@ impl Checker {
         target_ty
     }
 
+    fn resolve_method(
+        &mut self,
+        recv: TypeId,
+        name: &str,
+        name_span: Span,
+        arg_types: &[TypeId],
+        span: Span,
+        expected: Option<TypeId>,
+    ) -> TypeId {
+        let containers = self.lineage_names(recv);
+        let mut ufcs = vec![recv];
+        ufcs.extend_from_slice(arg_types);
+        if let Some(ret) =
+            self.try_resolve_in_containers(name, name_span, arg_types, expected, &containers)
+        {
+            return self.substitute_from_receiver(recv, ret);
+        }
+        if let Some(ret) =
+            self.try_resolve_in_containers(name, name_span, &ufcs, expected, &containers)
+        {
+            return self.substitute_from_receiver(recv, ret);
+        }
+        self.resolve_call(name, name_span, &[], arg_types, span, expected)
+    }
+
+    fn try_resolve_in_containers(
+        &mut self,
+        name: &str,
+        name_span: Span,
+        arg_types: &[TypeId],
+        expected: Option<TypeId>,
+        containers: &[String],
+    ) -> Option<TypeId> {
+        let (matched, _) = self.collect_matches(name, &[], arg_types, expected);
+        let filtered: Vec<_> = matched
+            .into_iter()
+            .filter(|(binding, _, _)| {
+                binding
+                    .container
+                    .as_ref()
+                    .is_some_and(|container| containers.iter().any(|name| name == container))
+            })
+            .collect();
+        let (binding, ret, _) = filtered.first()?;
+        self.define(name_span, binding.span, binding.uri.clone());
+        Some(*ret)
+    }
+
+    fn lineage_names(&self, id: TypeId) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut current = Some(self.types.unwrap_alias(id));
+        let mut walked = 0;
+        while let Some(id) = current {
+            walked += 1;
+            if walked > 32 {
+                break;
+            }
+            match &self.types.get(id).kind {
+                TypeKind::Applied { name, .. } => {
+                    let name = name.clone();
+                    names.push(name.clone());
+                    current = self.types_by_name.get(&name).copied();
+                }
+                TypeKind::Abstract { name, parent, .. }
+                | TypeKind::Class { name, parent, .. }
+                | TypeKind::Struct { name, parent, .. }
+                | TypeKind::Enum { name, parent, .. } => {
+                    names.push(name.clone());
+                    current = *parent;
+                }
+                TypeKind::Alias { name, target, .. } => {
+                    names.push(name.clone());
+                    current = Some(*target);
+                }
+                _ => break,
+            }
+        }
+        names
+    }
+
+    fn substitute_from_receiver(&mut self, recv: TypeId, ty: TypeId) -> TypeId {
+        let mut current = Some(self.types.unwrap_alias(recv));
+        let mut walked = 0;
+        while let Some(id) = current {
+            walked += 1;
+            if walked > 32 {
+                break;
+            }
+            match &self.types.get(id).kind {
+                TypeKind::Applied { name, args } => {
+                    let name = name.clone();
+                    let args = args.clone();
+                    if let Some(base) = self.types_by_name.get(&name).copied()
+                        && let TypeKind::Struct { generic_params, .. } = &self.types.get(base).kind
+                    {
+                        let params = generic_params.clone();
+                        if params.len() == args.len() {
+                            return self.substitute_named(ty, &params, &args);
+                        }
+                    }
+                    current = self.types_by_name.get(&name).copied();
+                }
+                TypeKind::Abstract { parent, .. }
+                | TypeKind::Class { parent, .. }
+                | TypeKind::Struct { parent, .. } => current = *parent,
+                TypeKind::Alias { target, .. } => current = Some(*target),
+                _ => break,
+            }
+        }
+        ty
+    }
+
+    fn substitute_named(&mut self, ty: TypeId, names: &[String], args: &[TypeId]) -> TypeId {
+        let dummy = Binding {
+            name: String::new(),
+            kind: String::new(),
+            span: Span::dummy(),
+            uri: String::new(),
+            ty,
+            operator_name: None,
+            generic_params: names.to_vec(),
+            param_types: Vec::new(),
+            return_type: ty,
+            implicit_count: 0,
+            container: None,
+            detail: None,
+        };
+        let inferred: Vec<Option<TypeId>> = args.iter().copied().map(Some).collect();
+        self.substitute_generics(ty, &dummy, &inferred)
+    }
+
+    fn reference_rank(&self, id: TypeId) -> Option<(u8, TypeId)> {
+        match &self.types.get(self.types.unwrap_alias(id)).kind {
+            TypeKind::Applied { name, args } => {
+                let rank = match name.as_str() {
+                    "MutableReference" => 0,
+                    "ConstReference" => 1,
+                    "Reference" => 2,
+                    _ => return None,
+                };
+                Some((rank, *args.first()?))
+            }
+            _ => None,
+        }
+    }
+
     fn resolve_call(
         &mut self,
         name: &str,
@@ -1793,6 +1934,13 @@ impl Checker {
             return self.error_ty;
         }
         if self.lookup_value(short).is_none() && !self.callables.contains_key(short) {
+            if short
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+            {
+                return expected.unwrap_or(self.error_ty);
+            }
             self.error(name_span, format!("Cannot resolve '{short}'"));
         } else {
             self.error(
@@ -2392,6 +2540,37 @@ impl Checker {
     fn can_convert(&self, from: TypeId, to: TypeId) -> bool {
         if self.types.is_subtype(from, to) {
             return true;
+        }
+        if self.types.is_never(from) || self.types.name_of(from) == "never" {
+            return true;
+        }
+        if let TypeKind::Union { members } = &self.types.get(self.types.unwrap_alias(from)).kind {
+            let members = members.clone();
+            if !members.is_empty() && members.iter().all(|member| self.can_convert(*member, to)) {
+                return true;
+            }
+        }
+        if let TypeKind::Union { members } = &self.types.get(self.types.unwrap_alias(to)).kind {
+            let members = members.clone();
+            if members.iter().any(|member| self.can_convert(from, *member)) {
+                return true;
+            }
+        }
+        if let (Some((from_rank, from_arg)), Some((to_rank, to_arg))) =
+            (self.reference_rank(from), self.reference_rank(to))
+            && from_rank <= to_rank
+            && self.can_convert(from_arg, to_arg)
+        {
+            return true;
+        }
+        if matches!(
+            self.types.get(self.types.unwrap_alias(from)).kind,
+            TypeKind::Enum { .. }
+        ) {
+            let to_name = self.types.name_of(to);
+            if to_name == "Smi" || to_name.ends_with("Smi") {
+                return true;
+            }
         }
         if self.types.is_integer_literal(from) && self.types.numeric_like(to) {
             return true;

@@ -53,6 +53,7 @@ pub enum TypeKind {
         name: String,
         parent: Option<TypeId>,
         fields: Vec<FieldInfo>,
+        generic_params: Vec<String>,
     },
     Function {
         params: Vec<TypeId>,
