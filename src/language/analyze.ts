@@ -175,30 +175,22 @@ export function definitionRange(analysis: DocumentAnalysis, definition: Definiti
   return rangeFromOffsets(analysis.lines, definition.toStart, definition.toEnd);
 }
 
+function isIdentLike(token: Token): boolean {
+  return token.kind === "identifier" || token.kind === "keyword" || token.kind === "string";
+}
+
 export function identifierAt(analysis: DocumentAnalysis, offset: number): Token | undefined {
-  const inclusive = analysis.tokens.find((token) => offset >= token.start && offset <= token.end);
-  if (
-    inclusive !== undefined &&
-    (inclusive.kind === "identifier" || inclusive.kind === "keyword" || inclusive.kind === "string")
-  ) {
-    return inclusive;
+  const contained = analysis.tokens.find((token) => offset >= token.start && offset < token.end);
+  if (contained !== undefined && isIdentLike(contained)) {
+    return contained;
   }
-  let nearest: Token | undefined;
+  let atEnd: Token | undefined;
   for (const token of analysis.tokens) {
-    if (token.end < offset) {
-      nearest = token;
-    } else if (token.start > offset) {
-      break;
+    if (token.end === offset && isIdentLike(token)) {
+      atEnd = token;
     }
   }
-  if (
-    nearest !== undefined &&
-    (nearest.kind === "identifier" || nearest.kind === "keyword") &&
-    offset - nearest.end <= 0
-  ) {
-    return nearest;
-  }
-  return undefined;
+  return atEnd;
 }
 
 function definitionAt(analysis: DocumentAnalysis, offset: number): DefinitionMapping[] {
@@ -211,6 +203,48 @@ function symbolAt(
   end: number,
 ): TorqueSymbol | undefined {
   return analysis.symbols.find((symbol) => symbol.start === start && symbol.end === end);
+}
+
+function symbolNameMatches(symbol: TorqueSymbol, name: string): boolean {
+  return symbol.name === name || symbol.name.endsWith(`::${name}`);
+}
+
+function resolveDefinitionByName(
+  analysis: DocumentAnalysis,
+  offset: number,
+  workspace: readonly DocumentAnalysis[],
+): TorqueSymbol[] {
+  const token = identifierAt(analysis, offset);
+  if (token === undefined || token.kind === "string") {
+    return [];
+  }
+  const name = token.text;
+  const documents = [analysis, ...workspace.filter((item) => item !== analysis)];
+  const matches: TorqueSymbol[] = [];
+  for (const document of documents) {
+    for (const symbol of document.symbols) {
+      if (symbolNameMatches(symbol, name)) {
+        matches.push(symbol);
+      }
+    }
+  }
+  const covering = matches.filter(
+    (symbol) => analysis.symbols.includes(symbol) && offset >= symbol.start && offset <= symbol.end,
+  );
+  if (covering.length > 0) {
+    return [covering[covering.length - 1]];
+  }
+  const local = matches.filter(
+    (symbol) => analysis.symbols.includes(symbol) && symbol.end <= token.start,
+  );
+  if (local.length > 0) {
+    return [local[local.length - 1]];
+  }
+  const sameFile = matches.filter((symbol) => analysis.symbols.includes(symbol));
+  if (sameFile.length > 0) {
+    return [sameFile[0]];
+  }
+  return matches.slice(0, 8);
 }
 
 export function resolveDefinition(
@@ -239,7 +273,10 @@ export function resolveDefinition(
       resolved.push(named);
     }
   }
-  return resolved;
+  if (resolved.length > 0) {
+    return resolved;
+  }
+  return resolveDefinitionByName(analysis, offset, workspace);
 }
 
 export function includeAt(

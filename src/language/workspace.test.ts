@@ -22,6 +22,17 @@ describe("TorqueWorkspace", () => {
     );
     expect(hit?.toUri).toBe("memory://helper.tq");
   });
+
+  test("jumps from a declaration name to that same declaration", () => {
+    const store = new TorqueWorkspace();
+    const helper = "macro Helper(x: Smi): Smi { return x; }";
+    store.set("memory://helper.tq", helper);
+    const analysis = store.get("memory://helper.tq");
+    const [symbol] = resolveDefinition(analysis!, helper.indexOf("Helper"), store.all());
+    expect(symbol?.kind).toBe("macro");
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(helper.indexOf("Helper"));
+  });
 });
 
 describe("compileSources", () => {

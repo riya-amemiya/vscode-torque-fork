@@ -169,6 +169,71 @@ macro Main(a: Smi): Smi {
     expect(symbol?.name).toBe("b");
     expect(symbol?.start).toBe(source.indexOf("let b") + "let ".length);
   });
+
+  test("jumps from a declaration name to that declaration", () => {
+    const source = "macro Helper(x: Smi): Smi { return x; }";
+    const analysis = analyzeDocument(source);
+    const [symbol] = resolveDefinition(analysis, source.indexOf("Helper"), []);
+    expect(symbol?.kind).toBe("macro");
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(source.indexOf("Helper"));
+  });
+
+  test("jumps to the parameter under the cursor when the name is reused", () => {
+    const source = `
+macro Helper(x: Smi): Smi { return x; }
+macro Main(x: Smi): Smi { return Helper(x); }
+`.trim();
+    const analysis = analyzeDocument(source);
+    const offset = source.indexOf("Main(x") + "Main(".length;
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.name).toBe("x");
+    expect(symbol?.start).toBe(offset);
+    expect(symbol?.containerName).toBe("Main");
+  });
+
+  test("jumps to the macro under the cursor when the name is overloaded", () => {
+    const source = `
+macro Helper(x: Smi): Smi { return x; }
+macro Helper(x: String): String { return x; }
+`.trim();
+    const analysis = analyzeDocument(source);
+    const offset = source.lastIndexOf("Helper");
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(offset);
+  });
+
+  test("jumps from a parameter name immediately after '('", () => {
+    const source = "macro Helper(x: Smi): Smi { return x; }";
+    const analysis = analyzeDocument(source);
+    const offset = source.indexOf("x");
+    const [symbol] = resolveDefinition(analysis, offset, []);
+    expect(symbol?.kind).toBe("const");
+    expect(symbol?.name).toBe("x");
+    expect(symbol?.start).toBe(offset);
+  });
+
+  test("jumps from the exclusive end of a declaration name", () => {
+    const source = "macro Helper(x: Smi): Smi { return x; }";
+    const analysis = analyzeDocument(source);
+    const start = source.indexOf("Helper");
+    const [symbol] = resolveDefinition(analysis, start + "Helper".length, []);
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(start);
+  });
+
+  test("falls back to workspace symbols when the compiler map misses", () => {
+    const helper = "macro Helper(x: Smi): Smi { return x; }";
+    const main = "macro Main(x: Smi): Smi { return Helper(x); }";
+    const helperAnalysis = analyzeDocument(helper, "memory://helper.tq");
+    const mainAnalysis = analyzeDocument(main, "memory://main.tq");
+    mainAnalysis.definitions = [];
+    const [symbol] = resolveDefinition(mainAnalysis, main.indexOf("Helper"), [helperAnalysis]);
+    expect(symbol?.kind).toBe("macro");
+    expect(symbol?.name).toBe("Helper");
+    expect(symbol?.start).toBe(helper.indexOf("Helper"));
+  });
 });
 
 describe("completionsFor", () => {
