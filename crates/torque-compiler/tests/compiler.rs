@@ -660,6 +660,60 @@ fn dump_real_iterator() {
 }
 
 #[test]
+fn dump_real_base_has_no_user_reported_garbage() {
+    let path = "/tmp/v8-full-tq/src/builtins/base.tq";
+    if std::fs::read_to_string(path).is_err() {
+        return;
+    }
+    let mut files = Vec::new();
+    fn walk(dir: &std::path::Path, files: &mut Vec<SourceFileInput>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("tq") {
+                files.push(SourceFileInput {
+                    uri: path.to_string_lossy().into_owned(),
+                    text: std::fs::read_to_string(&path).unwrap_or_default(),
+                });
+            }
+        }
+    }
+    walk(std::path::Path::new("/tmp/v8-full-tq"), &mut files);
+    let result = compile(&files);
+    let Some(file) = result
+        .files
+        .iter()
+        .find(|item| item.uri.ends_with("src/builtins/base.tq"))
+    else {
+        return;
+    };
+    assert_no_false_positives(file);
+    let messages = messages(file);
+    let garbage: Vec<_> = messages
+        .iter()
+        .filter(|item| {
+            item.contains("Expected '>'")
+                || item.contains("Cannot resolve 'return'")
+                || item.contains("Cannot resolve type 'V8_ENABLE")
+                || item.contains("Cannot resolve 'dcheck'")
+                || item.contains("Cannot resolve 'Slow'")
+                || item.contains("Cannot resolve label")
+                || item.contains("has no field")
+                || item.contains("MakeWeak")
+                || item.contains("GetHeapObjectAssumeWeak")
+                || item.contains("SmiFromUint32")
+                || item.contains("not assignable")
+        })
+        .cloned()
+        .collect();
+    assert!(garbage.is_empty(), "{messages:?}");
+}
+
+#[test]
 fn dump_real_array_flat() {
     let path = "/tmp/v8-tq/array-flat.tq";
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -858,5 +912,505 @@ macro Main(implicit context: Context)(): JSFunction {
             .iter()
             .any(|item| item.contains("NativeContextSlot") || item.contains("PROMISE_FUNCTION")),
         "{messages:?}"
+    );
+}
+
+fn assert_clean(file: &torque_compiler::FileAnalysis) {
+    let messages = messages(file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected '>'")
+            || item.contains("Expected '{'")
+            || item.contains("Cannot resolve 'return'")
+            || item.contains("Cannot resolve type 'V8_ENABLE")
+            || item.contains("Cannot resolve 'dcheck'")
+            || item.contains("Cannot resolve 'Slow'")
+            || item.contains("Cannot resolve label")
+            || item.contains("has no field")
+            || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn nested_generic_closing_angles_are_not_shift_tokens() {
+    let source = r#"
+type WeakHeapObject;
+type Weak<T: type> extends WeakHeapObject;
+type MaybeObject = Smi|HeapObject|WeakHeapObject;
+type RawPtr<T: type>;
+extern macro MakeWeak(HeapObject): WeakHeapObject;
+extern macro GetHeapObjectAssumeWeak(MaybeObject): HeapObject labels IfCleared;
+macro StrongToWeak<T: type>(x: T): Weak<T> {
+  return %RawDownCast<Weak<T>>(MakeWeak(x));
+}
+macro WeakToStrong<T: type>(x: Weak<T>): T labels ClearedWeakPointer {
+  const x = GetHeapObjectAssumeWeak(x) otherwise ClearedWeakPointer;
+  return %RawDownCast<T>(x);
+}
+macro Tag<T: type>(value: T): Smi {
+  return %RawDownCast<Smi>(value);
+}
+macro Deep<T: type>(x: T): RawPtr<RawPtr<T>> {
+  return %RawDownCast<RawPtr<RawPtr<T>>>(x);
+}
+"#;
+    let file = compile_one("memory://nested-generic.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected '>'")
+            || item.contains("MakeWeak")
+            || item.contains("matching callable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn otherwise_return_is_a_statement_not_an_identifier() {
+    let source = r#"
+extern macro BranchIfNumberEqual(Number, Number): never
+    labels Taken, NotTaken;
+operator '==' macro IsNumberEqual(a: Number, b: Number): bool {
+  BranchIfNumberEqual(a, b) otherwise return true, return false;
+}
+macro IsForceSlowPath(): bool {
+  BranchIfNumberEqual(0, 1) otherwise return true;
+  return false;
+}
+macro EarlyOut(x: Number): void {
+  BranchIfNumberEqual(x, 0) otherwise return;
+}
+"#;
+    let file = compile_one("memory://otherwise-return.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Cannot resolve 'return'") || item.contains("Expected ';'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn if_annotations_do_not_break_struct_fields_or_statements() {
+    let source = r#"
+struct float64_or_undefined_or_hole {
+  @if(V8_ENABLE_UNDEFINED_DOUBLE)
+  macro Value(): float64 labels IfUndefined, IfHole {
+    if (this.is_undefined) {
+      goto IfUndefined;
+    }
+    return this.value;
+  }
+
+  macro ValueUnsafeAssumeNotHole(): float64 {
+    @if(V8_ENABLE_UNDEFINED_DOUBLE) {
+      dcheck(!this.is_undefined);
+    }
+    return this.value;
+  }
+
+  @if(V8_ENABLE_UNDEFINED_DOUBLE) is_undefined: bool;
+  is_hole: bool;
+  value: float64;
+}
+macro Read(x: float64_or_undefined_or_hole): float64 {
+  return x.value;
+}
+"#;
+    let file = compile_one("memory://if-ann.tq", source.trim());
+    assert_clean(&file);
+}
+
+#[test]
+fn try_labels_are_visible_to_otherwise_clauses() {
+    let source = r#"
+transitioning builtin FastCreate(receiver: JSAny, value: JSAny): JSAny {
+  try {
+    const n = Cast<Smi>(receiver) otherwise Slow;
+    if (n < 0) goto Slow;
+    return n;
+  } label Slow {
+    return value;
+  }
+}
+"#;
+    let file = compile_one("memory://try-slow.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Slow") || item.contains("Cannot resolve label")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn generic_struct_literals_match_applied_return_types() {
+    let source = r#"
+struct ConstantIterator<T: type> {
+  value: T;
+}
+struct Slice<T: type, R: type> {
+  start: T;
+}
+macro ConstantIterator<T: type>(value: T): ConstantIterator<T> {
+  return ConstantIterator{value};
+}
+macro MakeSlice<T: type>(start: T): Slice<T, T> {
+  return Slice<T, T>{start};
+}
+"#;
+    let file = compile_one("memory://const-iter.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("not assignable")
+            || item.contains("Cannot resolve type 'T'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn generic_struct_methods_see_struct_type_parameters() {
+    let source = r#"
+struct ConstantIterator<T: type> {
+  macro Next(): T labels _NoMore {
+    return this.value;
+  }
+  value: T;
+}
+"#;
+    let file = compile_one("memory://const-iter.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("not assignable")
+            || item.contains("Cannot resolve type 'T'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn intptr_converts_to_uintptr_through_unsigned() {
+    let source = r#"
+extern operator '+' macro ConstexprUintPtrAdd(
+    constexpr uintptr, constexpr uintptr): constexpr intptr;
+extern operator '+' macro UintPtrAdd(uintptr, uintptr): uintptr;
+extern macro Unsigned(intptr): uintptr;
+macro ConvertRelativeIndex(indexIntPtr: intptr, length: uintptr): uintptr {
+  const relativeIndex: uintptr = Unsigned(indexIntPtr) + length;
+  return relativeIndex;
+}
+"#;
+    let file = compile_one("memory://unsigned.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn javascript_rest_arguments_expose_length_and_indexing() {
+    let source = r#"
+transitioning javascript builtin ArrayPrototypeConcat(
+    js-implicit context: NativeContext, receiver: JSAny)(...arguments): JSAny {
+  if (arguments.length == 0) {
+    return receiver;
+  }
+  return arguments[0];
+}
+"#;
+    let file = compile_one("memory://arguments.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("has no field")
+            || item.contains("not assignable")
+            || item.contains("Cannot resolve")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn bare_generic_specializations_are_callables() {
+    let source = r#"
+extern class PublicSymbol extends HeapObject {}
+macro Cast<T: type>(o: HeapObject): T labels CastError;
+Cast<PublicSymbol>(o: HeapObject): PublicSymbol labels CastError {
+  return %RawDownCast<PublicSymbol>(o);
+}
+transitioning LoadJoinElement<Smi>(
+    context: Context, receiver: JSReceiver, k: uintptr): JSAny {
+  return receiver;
+}
+macro Main(o: HeapObject): PublicSymbol {
+  return Cast<PublicSymbol>(o) otherwise unreachable;
+}
+macro FromConstexpr<To: type, From: type>(o: From): To;
+FromConstexpr<intptr, constexpr IntegerLiteral>(i: constexpr IntegerLiteral):
+    intptr {
+  return Convert<intptr>(i);
+}
+"#;
+    let file = compile_one("memory://specialize.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected ':'")
+            || item.contains("Expected callable")
+            || item.contains("Cannot find matching callable 'Cast'")
+            || item.contains("Cannot resolve type")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn indexed_class_fields_can_be_stored() {
+    let source = r#"
+extern class FixedArray extends HeapObject {
+  objects[length]: Object;
+}
+macro Store(elements: FixedArray, index: Smi, value: Smi): void {
+  elements[index] = value;
+}
+"#;
+    let file = compile_one("memory://indexed.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn string_literals_and_enum_entries_match_throw_type_error() {
+    let source = r#"
+extern enum MessageTemplate { kIncompatibleMethodReceiver, ... }
+extern macro ThrowTypeError(
+    implicit context: Context)(constexpr MessageTemplate, Object, Object): never;
+javascript builtin Foo(js-implicit context: NativeContext, receiver: JSAny)(): JSAny {
+  ThrowTypeError(
+      MessageTemplate::kIncompatibleMethodReceiver, 'get Foo', receiver);
+  return receiver;
+}
+"#;
+    let file = compile_one("memory://throw.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("ThrowTypeError") || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn equal_wrapper_prefers_boolean_overload() {
+    let source = r#"
+extern macro Equal(JSAny, JSAny, Context): Boolean;
+builtin Equal(implicit context: Context)(left: JSAny, right: JSAny): Object {
+  return left;
+}
+macro WrapEqual(implicit context: Context)(left: JSAny, right: JSAny): Boolean {
+  return Equal(left, right);
+}
+"#;
+    let file = compile_one("memory://equal.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn optional_class_fields_parse_without_expected_colon() {
+    let source = r#"
+extern class ScopeInfo extends HeapObject {
+  const flags: Smi;
+  const module_variable_count?
+      [flags == 1]: Smi;
+  inferred_function_name?[flags == 2]: String|Undefined;
+  outer_scope_info?: ScopeInfo;
+}
+macro Read(info: ScopeInfo): Smi {
+  return info.flags;
+}
+"#;
+    let file = compile_one("memory://optional-fields.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected ':'")
+            || item.contains("Expected '>'")
+            || item.contains("Cannot resolve type")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn union_type_args_on_bare_specializations_parse() {
+    let source = r#"
+type TheHole;
+macro Cast<T: type>(o: Object): T labels CastError;
+Cast<JSAny|TheHole>(o: Object): JSAny|TheHole labels CastError {
+  return %RawDownCast<JSAny|TheHole>(o);
+}
+macro Main(o: Object): JSAny|TheHole labels CastError {
+  return Cast<JSAny|TheHole>(o) otherwise CastError;
+}
+"#;
+    let file = compile_one("memory://union-specialization.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("Expected '>'")
+            || item.contains("Cannot resolve type")
+            || item.contains("Expected callable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn generic_type_extends_slice_exposes_length() {
+    let source = r#"
+struct Slice<T: type, Reference: type> {
+  const object: HeapObject;
+  const offset: intptr;
+  const length: intptr;
+}
+type MutableSlice<T: type> extends Slice<T, &T>;
+extern class FixedArray extends HeapObject {
+  objects[length]: Object;
+}
+macro SliceLength(slice: MutableSlice<Object>): intptr {
+  return slice.length;
+}
+macro FromIndexed(a: FixedArray): intptr {
+  const slice: MutableSlice<Object> = &a.objects;
+  return slice.length;
+}
+"#;
+    let file = compile_one("memory://slice-alias.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("has no field")
+            || item.contains("Cannot resolve type")
+            || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn unknown_cpp_parent_types_are_not_errors() {
+    let source = r#"
+type ManagedWasmNativeModule extends CppGCManagedBase
+    generates 'Tagged<Managed<wasm::NativeModule>>';
+extern class JSBreakIterator extends JSObject {
+  icu_break_iterator: CppGCManagedBase;
+}
+"#;
+    let file = compile_one("memory://cppgc.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("Cannot resolve type 'CppGCManagedBase'")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn constexpr_string_variables_match_object_and_string_params() {
+    let source = r#"
+type string constexpr 'const char*';
+extern enum MessageTemplate { kIncompatibleMethodReceiver, ... }
+extern macro ThrowTypeError(
+    implicit context: Context)(constexpr MessageTemplate, Object, Object): never;
+extern macro ToThisString(implicit context: Context)(JSAny, String): String;
+macro Main(implicit context: Context)(receiver: JSAny): String {
+  const methodName: constexpr string = 'get Foo';
+  ThrowTypeError(
+      MessageTemplate::kIncompatibleMethodReceiver, methodName, receiver);
+  return ToThisString(receiver, methodName);
+}
+"#;
+    let file = compile_one("memory://constexpr-string.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages.iter().any(|item| item.contains("ThrowTypeError")
+            || item.contains("ToThisString")
+            || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn generic_context_slot_fields_are_not_false_positives() {
+    let source = r#"
+extern class Context extends HeapObject {
+  elements[length]: Object;
+}
+type Slot<Container: type, T: type> extends intptr;
+macro InitContextSlot<
+    ArgumentContext: type, AnnotatedContext: type, T: type, U: type>(
+    context: ArgumentContext, index: Slot<AnnotatedContext, T>,
+    value: U): void {
+  const context: AnnotatedContext = context;
+  const value: T = value;
+  context.elements[index] = value;
+}
+"#;
+    let file = compile_one("memory://generic-slot.tq", source.trim());
+    let messages = messages(&file);
+    assert!(
+        !messages
+            .iter()
+            .any(|item| item.contains("has no field") || item.contains("not assignable")),
+        "{messages:?}"
+    );
+}
+
+fn compile_v8_tree() -> Option<torque_compiler::CompileResult> {
+    let root = std::path::Path::new("/tmp/v8-full-tq");
+    if !root.exists() {
+        return None;
+    }
+    let mut files = Vec::new();
+    fn walk(dir: &std::path::Path, files: &mut Vec<SourceFileInput>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("tq") {
+                files.push(SourceFileInput {
+                    uri: path.to_string_lossy().into_owned(),
+                    text: std::fs::read_to_string(&path).unwrap_or_default(),
+                });
+            }
+        }
+    }
+    walk(root, &mut files);
+    Some(compile(&files))
+}
+
+#[test]
+fn dump_real_workspace_has_no_diagnostics() {
+    let Some(result) = compile_v8_tree() else {
+        return;
+    };
+    let mut leftovers = Vec::new();
+    for file in &result.files {
+        for diagnostic in &file.diagnostics {
+            leftovers.push(format!(
+                "{}: {}",
+                file.uri.rsplit('/').next().unwrap_or(&file.uri),
+                diagnostic.message
+            ));
+        }
+    }
+    assert!(
+        leftovers.is_empty(),
+        "remaining diagnostics ({}) {:?}",
+        leftovers.len(),
+        leftovers.iter().take(40).collect::<Vec<_>>()
     );
 }

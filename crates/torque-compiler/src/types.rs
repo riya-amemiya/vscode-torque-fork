@@ -22,6 +22,7 @@ pub struct FieldInfo {
     pub name: String,
     pub ty: TypeId,
     pub span: Span,
+    pub indexed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +121,32 @@ impl TypeStore {
 
     pub fn intern_applied(&mut self, name: String, args: Vec<TypeId>, span: Span) -> TypeId {
         self.intern(TypeKind::Applied { name, args }, span)
+    }
+
+    pub fn intern_generic_param(&mut self, name: String, span: Span) -> TypeId {
+        for (index, existing) in self.types.iter().enumerate() {
+            if let TypeKind::GenericParam {
+                name: existing_name,
+            } = &existing.kind
+                && existing_name == &name
+            {
+                return TypeId(index as u32);
+            }
+        }
+        self.intern(TypeKind::GenericParam { name }, span)
+    }
+
+    pub fn is_constexpr(&self, id: TypeId) -> bool {
+        match &self.get(self.unwrap_alias(id)).kind {
+            TypeKind::Abstract { is_constexpr, .. } => *is_constexpr,
+            TypeKind::IntegerLiteral | TypeKind::StringLiteral => true,
+            _ => false,
+        }
+    }
+
+    pub fn base_name(&self, id: TypeId) -> String {
+        let name = self.name_of(id);
+        name.strip_prefix("constexpr ").unwrap_or(&name).to_string()
     }
 
     pub fn get(&self, id: TypeId) -> &TypeData {
@@ -450,6 +477,7 @@ mod tests {
                     name: "map".into(),
                     ty: object,
                     span: dummy,
+                    indexed: false,
                 }],
             },
             dummy,

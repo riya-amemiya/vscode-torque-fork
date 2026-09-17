@@ -355,6 +355,7 @@ pub enum Decl {
     },
     TypeAlias {
         name: Ident,
+        generic_params: Vec<Ident>,
         ty: TypeExpr,
         annotations: Vec<Annotation>,
     },
