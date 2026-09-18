@@ -148,6 +148,7 @@ impl TypeStore {
                 name: existing_name,
             } = &existing.kind
                 && existing_name == &name
+                && existing.span == span
             {
                 return TypeId(index as u32);
             }

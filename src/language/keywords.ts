@@ -161,13 +161,16 @@ export const TORQUE_BUILTINS = [
 
 export const TORQUE_COMMON_TYPES = [
   "Boolean",
+  "Callable",
   "Context",
+  "ElementsKind",
   "FixedArray",
   "HeapNumber",
   "HeapObject",
   "JSAny",
   "JSObject",
   "JSReceiver",
+  "JSTypedArray",
   "Map",
   "Name",
   "NativeContext",

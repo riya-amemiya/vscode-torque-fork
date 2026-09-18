@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { analyzeDocument, analyzeDocuments, type DocumentAnalysis } from "./analyze";
+import {
+  analyzeDocument,
+  analyzeDocuments,
+  dropResolvedElsewhere,
+  type DocumentAnalysis,
+} from "./analyze";
 
 export class TorqueWorkspace {
   private readonly sources = new Map<string, string>();
@@ -43,15 +48,37 @@ export class TorqueWorkspace {
     this.dirty = true;
   }
 
+  isDirty(): boolean {
+    return this.dirty;
+  }
+
   ensure(uri: string, text: string): DocumentAnalysis {
+    const hadAnalysis = this.documents.has(uri);
     this.load(uri, text);
-    if (this.dirty || !this.documents.has(uri)) {
+    if (!hadAnalysis) {
       this.rebuild();
     }
     const analysis = this.documents.get(uri);
     if (analysis === undefined) {
       throw new Error(`Torque compiler did not return analysis for ${uri}`);
     }
+    return analysis;
+  }
+
+  refresh(uri: string): DocumentAnalysis {
+    const text = this.sources.get(uri);
+    if (text === undefined) {
+      throw new Error(`Torque workspace has no source for ${uri}`);
+    }
+    const current = this.documents.get(uri);
+    if (current !== undefined && current.text === text) {
+      return current;
+    }
+    const siblings = [...this.documents.entries()]
+      .filter(([itemUri]) => itemUri !== uri)
+      .map(([, document]) => document);
+    const analysis = dropResolvedElsewhere(analyzeDocument(text, uri), siblings);
+    this.documents.set(uri, analysis);
     return analysis;
   }
 

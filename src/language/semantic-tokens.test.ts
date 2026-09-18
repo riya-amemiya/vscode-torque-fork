@@ -52,6 +52,32 @@ describe("semanticTokensFor", () => {
     expect(fail.every((span) => span.type === "label")).toBe(true);
   });
 
+  test("colors generic parameters and bound types in the V8 extends form", () => {
+    const join = `
+LoadJoinTypedElement<T : type extends ElementsKind>(
+    context: Context, receiver: JSReceiver, k: uintptr): JSAny {
+  const typedArray: JSTypedArray = UnsafeCast<JSTypedArray>(receiver);
+  return typed_array::KindForArrayType<T>();
+}
+`.trim();
+    const analysis = analyzeDocument(join);
+    const spans = semanticTokensFor(analysis);
+    const tSpans = spansNamed(spans, analysis, "T");
+    expect(tSpans.length).toBeGreaterThan(1);
+    expect(tSpans.every((span) => span.type === "type")).toBe(true);
+
+    const elementsKind = spansNamed(spans, analysis, "ElementsKind");
+    expect(elementsKind.length).toBeGreaterThan(0);
+    expect(elementsKind.every((span) => span.type === "type")).toBe(true);
+
+    const jsTypedArray = spansNamed(spans, analysis, "JSTypedArray");
+    expect(jsTypedArray.length).toBeGreaterThan(0);
+    expect(jsTypedArray.every((span) => span.type === "type")).toBe(true);
+
+    expect(spansNamed(spans, analysis, "type").length).toBe(0);
+    expect(spansNamed(spans, analysis, "extends").length).toBe(0);
+  });
+
   test("records let and label symbols from the compiler", () => {
     const analysis = analyzeDocument(source);
     const names = analysis.symbols.map((symbol) => `${symbol.kind}:${symbol.name}`);

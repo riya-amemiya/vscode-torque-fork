@@ -24,6 +24,7 @@ pub struct Ident {
 pub struct GenericParam {
     pub name: Ident,
     pub is_variable: bool,
+    pub extends: Option<TypeExpr>,
 }
 
 #[derive(Clone, Debug)]
@@ -420,6 +421,7 @@ pub enum Decl {
     },
 }
 
+#[derive(Clone, Debug)]
 pub struct ParsedFile {
     pub uri: String,
     pub text: String,

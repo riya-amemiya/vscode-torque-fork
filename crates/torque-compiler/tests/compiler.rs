@@ -1772,3 +1772,93 @@ fn dump_real_workspace_has_cross_file_definitions() {
         "expected cross-file definition mappings, sample={sample:?}"
     );
 }
+
+#[test]
+fn generic_parameter_t_resolves_inside_its_own_callable() {
+    let source = r#"
+macro Alpha<T : type extends Smi>(x: T): T {
+  return Convert<T>(x);
+}
+macro Beta<T : type extends String>(y: T): T {
+  return Convert<T>(y);
+}
+"#;
+    let file = compile_one("memory://two-t.tq", source.trim());
+    let text = source.trim();
+    let alpha_t = text.find("<T :").unwrap() as u32 + 1;
+    let beta_header = text.find("macro Beta").unwrap();
+    let beta_t = text[beta_header..].find("<T :").unwrap() as u32 + beta_header as u32 + 1;
+    let beta_use = text.rfind("Convert<T>").unwrap() as u32 + "Convert<".len() as u32;
+    let hit = file
+        .definitions
+        .iter()
+        .find(|item| beta_use >= item.from_start && beta_use <= item.from_end)
+        .expect("definition mapping for Beta's T");
+    assert_eq!(hit.to_start, beta_t);
+    assert_ne!(hit.to_start, alpha_t);
+    assert!(
+        names(&file).iter().any(|item| item == "type:T"),
+        "{:?}",
+        names(&file)
+    );
+}
+
+#[test]
+fn expected_semicolon_after_otherwise_unreachable_does_not_cover_next_const() {
+    let source = r#"
+macro Main(receiver: JSAny, callback: JSAny): void {
+  const jsreceiver = Cast<JSReceiver>(receiver) otherwise unreachable
+  const callbackfn = Cast<Callable>(callback) otherwise unreachable;
+}
+"#;
+    let file = compile_one("memory://semi.tq", source.trim());
+    let text = source.trim();
+    let second_const = text.find("const callbackfn").unwrap() as u32;
+    let second_const_end = second_const + "const".len() as u32;
+    let unreachable = text.find("unreachable").unwrap() as u32;
+    let unreachable_end = unreachable + "unreachable".len() as u32;
+    let expected_semi: Vec<_> = file
+        .diagnostics
+        .iter()
+        .filter(|item| item.message == "Expected ';'")
+        .collect();
+    assert!(
+        !expected_semi.is_empty(),
+        "expected a missing-semicolon diagnostic, got {:?}",
+        file.diagnostics
+    );
+    for item in expected_semi {
+        assert!(
+            item.start >= second_const_end || item.end <= second_const,
+            "Expected ';' overlapped the second const: {item:?}"
+        );
+        assert!(
+            item.start >= unreachable_end && item.start < second_const,
+            "Expected ';' was not after unreachable: {item:?}"
+        );
+    }
+}
+
+#[test]
+fn compile_reuses_parse_of_unchanged_uri_and_text() {
+    let keep = SourceFileInput {
+        uri: "memory://parse-reuse-keep.tq".into(),
+        text: "macro Keep(): void {}".into(),
+    };
+    let first = compile(&[
+        keep.clone(),
+        SourceFileInput {
+            uri: "memory://parse-reuse-edit.tq".into(),
+            text: "macro Edit(): void {}".into(),
+        },
+    ]);
+    assert_eq!(first.parse_count, 2);
+    let second = compile(&[
+        keep,
+        SourceFileInput {
+            uri: "memory://parse-reuse-edit.tq".into(),
+            text: "macro Edit(): void {".into(),
+        },
+    ]);
+    assert_eq!(second.parse_count, 1);
+}

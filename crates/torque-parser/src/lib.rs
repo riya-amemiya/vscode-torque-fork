@@ -19,6 +19,7 @@ use torque_diagnostic::Diagnostic;
 use torque_lexer::{Token, TokenKind, delimiter_errors, tokenize};
 use torque_span::Span;
 
+#[derive(Clone, Debug)]
 pub struct ParseOutput {
     pub file: ParsedFile,
     pub diagnostics: Vec<Diagnostic>,
@@ -29,6 +30,7 @@ struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,
     extra_gt: u32,
+    prev_end: usize,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -61,6 +63,7 @@ impl<'a> Parser<'a> {
 
     fn take(&mut self) -> Option<&'a Token> {
         let token = self.peek()?;
+        self.prev_end = token.end;
         self.index += 1;
         Some(token)
     }
@@ -70,6 +73,9 @@ impl<'a> Parser<'a> {
             return self.eat_gt();
         }
         if self.at(text) {
+            if let Some(token) = self.tokens.get(self.index) {
+                self.prev_end = token.end;
+            }
             self.index += 1;
             true
         } else {
@@ -92,15 +98,18 @@ impl<'a> Parser<'a> {
         }
         match self.peek().map(|t| t.text.as_str()) {
             Some(">") => {
+                self.prev_end = self.peek().map(|t| t.end).unwrap_or(self.prev_end);
                 self.index += 1;
                 true
             }
             Some(">>") => {
+                self.prev_end = self.peek().map(|t| t.end).unwrap_or(self.prev_end);
                 self.index += 1;
                 self.extra_gt = 1;
                 true
             }
             Some(">>>") => {
+                self.prev_end = self.peek().map(|t| t.end).unwrap_or(self.prev_end);
                 self.index += 1;
                 self.extra_gt = 2;
                 true
@@ -136,10 +145,13 @@ impl<'a> Parser<'a> {
         if self.at(text) {
             self.take()
         } else {
-            let span = self
-                .peek()
-                .map(|t| self.span_of(t))
-                .unwrap_or(Span::new(self.file, 0, 0));
+            let span = if text == ";" {
+                Span::new(self.file, self.prev_end, self.prev_end)
+            } else {
+                self.peek()
+                    .map(|t| self.span_of(t))
+                    .unwrap_or(Span::new(self.file, 0, 0))
+            };
             self.diagnostics
                 .push(Diagnostic::error(span, format!("Expected '{text}'")));
             None
@@ -168,6 +180,7 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier | TokenKind::Keyword | TokenKind::Intrinsic
         ) {
             let ident = self.ident_from(token);
+            self.prev_end = token.end;
             self.index += 1;
             return Some(ident);
         }
@@ -256,13 +269,16 @@ impl<'a> Parser<'a> {
                     parser.eat("type");
                     is_variable = true;
                 }
-                if parser.eat("extends") {
-                    let _ = parser.parse_type();
+                let extends = if parser.eat("extends") {
                     is_variable = true;
-                }
+                    parser.parse_type()
+                } else {
+                    None
+                };
                 Some(GenericParam {
                     name: type_expr_as_ident(&ty),
                     is_variable,
+                    extends,
                 })
             })
         };
@@ -1715,20 +1731,28 @@ impl<'a> Parser<'a> {
         }
         let saved = self.index;
         let saved_extra = self.extra_gt;
+        let saved_diagnostics = self.diagnostics.len();
+        let saved_end = self.prev_end;
         if self.parse_name().is_none() {
             self.index = saved;
             self.extra_gt = saved_extra;
+            self.prev_end = saved_end;
+            self.diagnostics.truncate(saved_diagnostics);
             return false;
         }
         if !self.at("<") {
             self.index = saved;
             self.extra_gt = saved_extra;
+            self.prev_end = saved_end;
+            self.diagnostics.truncate(saved_diagnostics);
             return false;
         }
-        let _ = self.parse_generic_args();
+        let _ = self.parse_generic_params();
         let ok = self.at("(");
         self.index = saved;
         self.extra_gt = saved_extra;
+        self.prev_end = saved_end;
+        self.diagnostics.truncate(saved_diagnostics);
         ok
     }
 
@@ -1907,6 +1931,7 @@ pub fn parse_file(uri: String, text: String, file: u32) -> ParseOutput {
         tokens: &tokens,
         index: 0,
         extra_gt: 0,
+        prev_end: 0,
         diagnostics,
     };
     let decls = parser.parse_file();
