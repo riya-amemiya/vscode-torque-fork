@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveDefinition } from "./analyze";
-import { compileSources } from "./wasm";
+import { compileSources, lastCompileParseCount } from "./wasm";
 import { TorqueWorkspace } from "./workspace";
 
 describe("TorqueWorkspace", () => {
@@ -57,6 +57,80 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
       (item) => offset >= item.fromStart && offset <= item.fromEnd,
     );
     expect(hit?.toUri).toBe("memory://helper.tq");
+  });
+
+  test("reuses the parse of an unchanged file and does not recompile on ensure", () => {
+    const store = new TorqueWorkspace();
+    store.load("memory://parse-reuse-keep.tq", "macro Keep(): void {}");
+    store.load("memory://parse-reuse-edit.tq", "macro Edit(): void {}");
+    store.rebuild();
+    expect(lastCompileParseCount()).toBe(2);
+    expect(store.isDirty()).toBe(false);
+
+    store.ensure("memory://parse-reuse-keep.tq", "macro Keep(): void {}");
+    expect(store.isDirty()).toBe(false);
+    expect(lastCompileParseCount()).toBe(2);
+
+    store.load("memory://parse-reuse-edit.tq", "macro Edit(): void {");
+    store.ensure("memory://parse-reuse-edit.tq", "macro Edit(): void {");
+    expect(lastCompileParseCount()).toBe(2);
+    expect(
+      store
+        .get("memory://parse-reuse-edit.tq")
+        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+    ).toBe(false);
+
+    store.rebuild();
+    expect(lastCompileParseCount()).toBe(1);
+    expect(
+      store
+        .get("memory://parse-reuse-edit.tq")
+        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+    ).toBe(true);
+    expect(
+      store
+        .get("memory://parse-reuse-keep.tq")
+        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+    ).toBe(false);
+  });
+
+  test("refresh reanalyzes only the edited file and leaves the sibling analysis in place", () => {
+    const store = new TorqueWorkspace();
+    store.load("memory://refresh-keep.tq", "macro Keep(): void {}");
+    store.load("memory://refresh-edit.tq", "macro Edit(): void {}");
+    store.rebuild();
+    const kept = store.get("memory://refresh-keep.tq");
+    store.load("memory://refresh-edit.tq", "macro Edit(): void {\n");
+    const edited = store.refresh("memory://refresh-edit.tq");
+    expect(lastCompileParseCount()).toBe(1);
+    expect(store.get("memory://refresh-keep.tq")).toBe(kept);
+    expect(edited.diagnostics.some((item) => item.message.includes("Unclosed"))).toBe(true);
+    expect(
+      store
+        .get("memory://refresh-keep.tq")
+        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+    ).toBe(false);
+    const count = lastCompileParseCount();
+    expect(store.refresh("memory://refresh-edit.tq")).toBe(edited);
+    expect(lastCompileParseCount()).toBe(count);
+  });
+
+  test("refresh does not report ElementsKind enum entries declared in a sibling file", () => {
+    const store = new TorqueWorkspace();
+    store.load("memory://elements-kind.tq", "extern enum ElementsKind { PACKED_SMI_ELEMENTS }");
+    store.load(
+      "memory://array-filter.tq",
+      "macro FastFilter(): JSReceiver { return AllocateJSArray(ElementsKind::PACKED_SMI_ELEMENTS); }",
+    );
+    store.rebuild();
+    store.load(
+      "memory://array-filter.tq",
+      "macro FastFilter(): JSReceiver {\n  return AllocateJSArray(ElementsKind::PACKED_SMI_ELEMENTS);\n}",
+    );
+    const analysis = store.refresh("memory://array-filter.tq");
+    expect(
+      analysis.diagnostics.some((item) => item.message === "Cannot resolve 'PACKED_SMI_ELEMENTS'"),
+    ).toBe(false);
   });
 });
 

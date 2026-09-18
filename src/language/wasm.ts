@@ -65,6 +65,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 let wasmExports: WasmExports | undefined;
+let lastParseCountValue = 0;
 
 function wasmCandidates(): string[] {
   const here = typeof __dirname === "string" ? __dirname : process.cwd();
@@ -106,6 +107,10 @@ export function ensureTorqueCompiler(): void {
   loadTorqueCompiler(readFileSync(wasmPath));
 }
 
+export function lastCompileParseCount(): number {
+  return lastParseCountValue;
+}
+
 export function compileSources(files: Array<{ uri: string; text: string }>): CompilerFile[] {
   ensureTorqueCompiler();
   const wasm = wasmExports;
@@ -120,7 +125,8 @@ export function compileSources(files: Array<{ uri: string; text: string }>): Com
     const outLen = wasm.torque_result_len();
     const output = decoder.decode(new Uint8Array(wasm.memory.buffer, outPtr, outLen).slice());
     wasm.torque_free(ptr, payload.length);
-    const parsed = JSON.parse(output) as { files: CompilerFile[] };
+    const parsed = JSON.parse(output) as { files: CompilerFile[]; parseCount?: number };
+    lastParseCountValue = parsed.parseCount ?? parsed.files.length;
     return parsed.files;
   } catch (error) {
     wasmExports = undefined;

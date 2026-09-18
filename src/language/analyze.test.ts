@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeDocument, includeAt, resolveDefinition } from "./analyze";
+import { analyzeDocument, dropResolvedElsewhere, includeAt, resolveDefinition } from "./analyze";
 import { completionsFor } from "./complete";
 
 const sample = `
@@ -221,6 +221,89 @@ macro Helper(x: String): String { return x; }
     const [symbol] = resolveDefinition(analysis, start + "Helper".length, []);
     expect(symbol?.name).toBe("Helper");
     expect(symbol?.start).toBe(start);
+  });
+
+  test("jumps each generic T to its own callable, not a sibling T", () => {
+    const source = `
+macro Alpha<T : type extends Smi>(x: T): T {
+  return Convert<T>(x);
+}
+macro Beta<T : type extends String>(y: T): T {
+  return Convert<T>(y);
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    const alphaT = source.indexOf("<T :") + 1;
+    const betaHeader = source.indexOf("macro Beta");
+    const betaT = source.indexOf("<T :", betaHeader) + 1;
+    const betaConvert = source.lastIndexOf("Convert<T>") + "Convert<".length;
+
+    const [fromDecl] = resolveDefinition(analysis, betaT, []);
+    expect(fromDecl?.name).toBe("T");
+    expect(fromDecl?.kind).toBe("type");
+    expect(fromDecl?.start).toBe(betaT);
+    expect(fromDecl?.start).not.toBe(alphaT);
+
+    const [fromUse] = resolveDefinition(analysis, betaConvert, []);
+    expect(fromUse?.name).toBe("T");
+    expect(fromUse?.kind).toBe("type");
+    expect(fromUse?.start).toBe(betaT);
+    expect(fromUse?.start).not.toBe(alphaT);
+  });
+
+  test("does not resolve Cast type arguments to a generic parameter", () => {
+    const source = `
+macro Alpha<T : type extends Smi>(x: T): T { return x; }
+macro Main(receiver: JSAny): JSReceiver {
+  return Cast<JSReceiver>(receiver) otherwise unreachable;
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    const jsReceiver = source.indexOf("Cast<JSReceiver>") + "Cast<".length;
+    const resolved = resolveDefinition(analysis, jsReceiver, []);
+    expect(resolved.every((symbol) => symbol.name !== "T")).toBe(true);
+  });
+
+  test("does not keep Cannot resolve for enum entries declared in another file", () => {
+    const source = `
+macro FastFilterSpeciesCreate(receiver: JSReceiver): JSReceiver {
+  return AllocateJSArray(ElementsKind::PACKED_SMI_ELEMENTS, receiver);
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    expect(
+      analysis.diagnostics.some((item) => item.message === "Cannot resolve 'PACKED_SMI_ELEMENTS'"),
+    ).toBe(true);
+    const enumFile = analyzeDocument(
+      "extern enum ElementsKind { PACKED_SMI_ELEMENTS }",
+      "memory://elements-kind.tq",
+    );
+    const filtered = dropResolvedElsewhere(analysis, [enumFile]);
+    expect(
+      filtered.diagnostics.some((item) => item.message === "Cannot resolve 'PACKED_SMI_ELEMENTS'"),
+    ).toBe(false);
+  });
+
+  test("places Expected ';' after otherwise unreachable, not on the next const", () => {
+    const source = `
+macro Main(receiver: JSAny, callback: JSAny): void {
+  const jsreceiver = Cast<JSReceiver>(receiver) otherwise unreachable
+  const callbackfn = Cast<Callable>(callback) otherwise unreachable;
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    const secondConst = source.indexOf("const callbackfn");
+    const secondConstEnd = secondConst + "const".length;
+    const unreachable = source.indexOf("unreachable");
+    const unreachableEnd = unreachable + "unreachable".length;
+    const expectedSemi = analysis.diagnostics.filter((item) => item.message === "Expected ';'");
+    expect(expectedSemi.length).toBeGreaterThan(0);
+    expect(
+      expectedSemi.every((item) => item.start >= secondConstEnd || item.end <= secondConst),
+    ).toBe(true);
+    expect(
+      expectedSemi.every((item) => item.start >= unreachableEnd && item.start < secondConst),
+    ).toBe(true);
   });
 
   test("falls back to workspace symbols when the compiler map misses", () => {

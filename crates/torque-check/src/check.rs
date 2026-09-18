@@ -661,6 +661,7 @@ impl Checker {
                     ..
                 } => {
                     let saved = self.push_generic_params(generic_params);
+                    self.bind_generic_param_symbols(generic_params, Some(&name.name));
                     let target = self.resolve_type_expr(ty);
                     self.pop_generic_params(saved);
                     if let Some(id) = self.types_by_name.get(&name.name).copied() {
@@ -677,6 +678,7 @@ impl Checker {
                     ..
                 } => {
                     let saved = self.push_generic_params(generic_params);
+                    self.bind_generic_param_symbols(generic_params, Some(&name.name));
                     let parent = extends.as_ref().map(|ty| self.resolve_type_expr(ty));
                     self.pop_generic_params(saved);
                     if let Some(id) = self.types_by_name.get(&name.name).copied()
@@ -743,6 +745,7 @@ impl Checker {
                     ..
                 } => {
                     let saved_generics = self.push_generic_params(generic_params);
+                    self.bind_generic_param_symbols(generic_params, Some(&name.name));
                     let mut field_infos = Vec::new();
                     for field in fields {
                         let ty = self.resolve_type_expr(&field.ty);
@@ -906,6 +909,7 @@ impl Checker {
 
     fn bind_callable(&mut self, callable: &CallableDecl, container: Option<&str>) {
         let saved_generics = self.push_generic_params(&callable.generic_params);
+        self.bind_generic_param_symbols(&callable.generic_params, Some(&callable.name.name));
         let mut param_types = Vec::new();
         for param in callable
             .params
@@ -963,6 +967,28 @@ impl Checker {
 
     fn define_type_uses(&mut self, ty: &TypeExpr) {
         let _ = self.resolve_type_expr(ty);
+    }
+
+    fn bind_generic_param_symbols(&mut self, params: &[GenericParam], container: Option<&str>) {
+        for param in params {
+            self.push_symbol(
+                param.name.span.file,
+                param.name.name.clone(),
+                "type",
+                param.name.span.start,
+                param.name.span.end,
+                container.map(str::to_string),
+                None,
+            );
+            self.define(
+                param.name.span,
+                param.name.span,
+                self.uri(param.name.span.file),
+            );
+            if let Some(bound) = &param.extends {
+                let _ = self.resolve_type_expr(bound);
+            }
+        }
     }
 
     fn check_decls(&mut self, decls: &[Decl]) {

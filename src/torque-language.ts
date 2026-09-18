@@ -194,22 +194,17 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     semanticChange.fire();
   };
 
-  let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
-  const scheduleRebuild = (): void => {
-    if (rebuildTimer !== undefined) {
-      clearTimeout(rebuildTimer);
-    }
-    rebuildTimer = setTimeout(() => {
-      rebuildTimer = undefined;
-      rebuildAndPublish();
-    }, 200);
-  };
+  const disk = { loaded: false };
 
   const loadDiskFiles = (seedPath: string): void => {
+    if (disk.loaded) {
+      return;
+    }
     const root = findTorqueRoot(seedPath);
     if (root === undefined) {
       return;
     }
+    disk.loaded = true;
     for (const fsPath of listTorqueFiles(root)) {
       const uri = Uri.file(fsPath).toString();
       if (store.hasSource(uri)) {
@@ -223,23 +218,38 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     }
   };
 
-  const ingest = (document: TextDocument, immediate = false): void => {
+  const refreshDocument = (document: TextDocument): void => {
     if (document.languageId !== "torque") {
       return;
     }
-    store.load(document.uri.toString(), document.getText());
+    const uri = document.uri.toString();
+    const text = document.getText();
+    if (store.get(uri)?.text === text) {
+      return;
+    }
+    store.load(uri, text);
+    publish(document.uri, store.refresh(uri));
+    semanticChange.fire();
+  };
+
+  const ingestOpen = (document: TextDocument): void => {
+    if (document.languageId !== "torque") {
+      return;
+    }
+    const uri = document.uri.toString();
+    store.load(uri, document.getText());
     if (document.uri.scheme === "file") {
       loadDiskFiles(document.uri.fsPath);
     }
-    if (immediate) {
-      rebuildAndPublish();
+    if (store.get(uri) !== undefined) {
+      refreshDocument(document);
       return;
     }
-    scheduleRebuild();
+    rebuildAndPublish();
   };
 
   for (const document of vsWorkspace.textDocuments) {
-    ingest(document, true);
+    ingestOpen(document);
   }
 
   void vsWorkspace
@@ -258,8 +268,16 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
   context.subscriptions.push(
     diagnostics,
     semanticChange,
-    vsWorkspace.onDidOpenTextDocument(ingest),
-    vsWorkspace.onDidChangeTextDocument((event) => ingest(event.document)),
+    vsWorkspace.onDidOpenTextDocument(ingestOpen),
+    vsWorkspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length === 0) {
+        return;
+      }
+      refreshDocument(event.document);
+    }),
+    vsWorkspace.onDidSaveTextDocument((document) => {
+      refreshDocument(document);
+    }),
     vsWorkspace.onDidCloseTextDocument((document) => {
       diagnostics.delete(document.uri);
     }),

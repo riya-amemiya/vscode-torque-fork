@@ -100,10 +100,10 @@
     },
     "builtin-types": {
       "name": "support.type.builtin.torque",
-      "match": "\\b(Arguments|BigInt|Boolean|Context|FixedArray|FixedDoubleArray|HeapNumber|HeapObject|JSAny|JSArray|JSFunction|JSObject|JSProxy|JSReceiver|JSTypedArray|Map|MaybeObject|Name|NativeContext|Never|Number|Numeric|Object|Oddball|Smi|String|Symbol|Tagged|WeakHeapObject|bint|bool|float32|float64_or_hole|float64|int31|int32|int64|intptr|never|uint32|uint64|uintptr|void)\\b"
+      "match": "\\b(Arguments|BigInt|Boolean|Callable|Context|ElementsKind|FixedArray|FixedDoubleArray|HeapNumber|HeapObject|JSAny|JSArray|JSFunction|JSObject|JSProxy|JSReceiver|JSTypedArray|Map|MaybeObject|Name|NativeContext|Never|Number|Numeric|Object|Oddball|Smi|String|Symbol|Tagged|WeakHeapObject|bint|bool|float32|float64_or_hole|float64|int31|int32|int64|intptr|never|uint32|uint64|uintptr|void)\\b"
     },
     "generics": {
-      "begin": "\\b<(?=[A-Za-z][0-9A-Za-z_|, ]*>)",
+      "begin": "\\b<(?=[A-Za-z][0-9A-Za-z_|, :]*>)",
       "end": ">",
       "patterns": [
         {
@@ -142,7 +142,7 @@
       ]
     },
     "type-decl": {
-      "begin": "\\b(type)\\b",
+      "begin": "(?<!:\\s*)\\b(type)\\b",
       "end": ";",
       "captures": {
         "1": {
@@ -281,7 +281,7 @@
         },
         {
           "name": "keyword.other.torque",
-          "match": "\\b(constexpr|macro|builtin|runtime|intrinsic|javascript|implicit|js-implicit|deferred|labels|tail|let|generates|weak|extern|const|typeswitch|case|transient|transitioning|operator|namespace|enum|shape|bitfield)\\b"
+          "match": "\\b(constexpr|macro|builtin|runtime|intrinsic|javascript|implicit|js-implicit|deferred|labels|tail|let|generates|weak|extern|const|typeswitch|case|transient|transitioning|operator|namespace|enum|shape|bitfield|type|extends)\\b"
         },
         {
           "name": "keyword.operator.torque",

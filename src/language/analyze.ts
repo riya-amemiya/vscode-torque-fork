@@ -157,6 +157,59 @@ export function analyzeDocument(text: string, uri = "memory://document.tq"): Doc
   return files.get(uri) ?? analysisFromCompiler(uri, text, emptyCompilerFile(uri));
 }
 
+function unresolvedName(message: string): string | undefined {
+  const prefix = "Cannot resolve '";
+  if (!message.startsWith(prefix) || !message.endsWith("'")) {
+    return undefined;
+  }
+  return message.slice(prefix.length, message.length - 1);
+}
+
+function qualifierAt(analysis: DocumentAnalysis, start: number): string | undefined {
+  const tokens = analysis.tokens.filter((token) => token.kind !== "comment");
+  const index = tokens.findIndex((token) => start >= token.start && start < token.end);
+  if (index < 2) {
+    return undefined;
+  }
+  const operator = tokens[index - 1];
+  const namespace = tokens[index - 2];
+  if (operator.text !== "::") {
+    return undefined;
+  }
+  if (namespace.kind !== "identifier" && namespace.kind !== "keyword") {
+    return undefined;
+  }
+  return namespace.text;
+}
+
+export function dropResolvedElsewhere(
+  analysis: DocumentAnalysis,
+  workspace: readonly DocumentAnalysis[],
+): DocumentAnalysis {
+  const known = new Set<string>();
+  for (const document of workspace) {
+    for (const symbol of document.symbols) {
+      if (symbol.containerName !== undefined) {
+        known.add(`${symbol.containerName}::${symbol.name}`);
+      }
+    }
+  }
+  return {
+    ...analysis,
+    diagnostics: analysis.diagnostics.filter((item) => {
+      const name = unresolvedName(item.message);
+      if (name === undefined) {
+        return true;
+      }
+      const qualifier = qualifierAt(analysis, item.start);
+      if (qualifier === undefined) {
+        return true;
+      }
+      return !known.has(`${qualifier}::${name}`);
+    }),
+  };
+}
+
 function emptyCompilerFile(uri: string): CompilerFile {
   return {
     uri,
