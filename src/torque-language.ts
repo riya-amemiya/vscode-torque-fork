@@ -19,11 +19,14 @@ import {
   Diagnostic,
   DiagnosticSeverity,
   DocumentSymbol,
+  EventEmitter,
   Hover,
   Location,
   MarkdownString,
   Position,
   Range,
+  SemanticTokensBuilder,
+  SemanticTokensLegend,
   SnippetString,
   SymbolKind,
   Uri,
@@ -45,8 +48,18 @@ import {
 import { completionsFor, type CompletionKind } from "./language/complete";
 import { hoverFor } from "./language/hover";
 import { positionToOffset } from "./language/positions";
+import {
+  SEMANTIC_TOKEN_MODIFIERS,
+  SEMANTIC_TOKEN_TYPES,
+  semanticTokensFor,
+} from "./language/semantic-tokens";
 import { TorqueWorkspace } from "./language/workspace";
 import { findTorqueRoot, listTorqueFiles } from "./language/workspace-files";
+
+const SEMANTIC_LEGEND = new SemanticTokensLegend(
+  [...SEMANTIC_TOKEN_TYPES],
+  [...SEMANTIC_TOKEN_MODIFIERS],
+);
 
 const SELECTOR = { language: "torque", scheme: "file" };
 
@@ -79,6 +92,10 @@ function symbolKind(kind: TorqueSymbolKind): SymbolKind {
       return SymbolKind.Function;
     case "const":
       return SymbolKind.Constant;
+    case "let":
+      return SymbolKind.Variable;
+    case "label":
+      return SymbolKind.Key;
     case "field":
       return SymbolKind.Field;
     case "shape":
@@ -148,6 +165,7 @@ function locationForSymbol(store: TorqueWorkspace, symbol: TorqueSymbol, fallbac
 
 export function registerTorqueLanguage(context: ExtensionContext, store: TorqueWorkspace): void {
   const diagnostics = languages.createDiagnosticCollection("torque-compiler");
+  const semanticChange = new EventEmitter<void>();
 
   const publish = (uri: Uri, analysis: DocumentAnalysis): void => {
     diagnostics.set(
@@ -173,6 +191,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
   const rebuildAndPublish = (): void => {
     store.rebuild();
     publishAll();
+    semanticChange.fire();
   };
 
   let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
@@ -238,6 +257,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
 
   context.subscriptions.push(
     diagnostics,
+    semanticChange,
     vsWorkspace.onDidOpenTextDocument(ingest),
     vsWorkspace.onDidChangeTextDocument((event) => ingest(event.document)),
     vsWorkspace.onDidCloseTextDocument((document) => {
@@ -317,5 +337,29 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
         });
       },
     }),
+    languages.registerDocumentSemanticTokensProvider(
+      SELECTOR,
+      {
+        onDidChangeSemanticTokens: semanticChange.event,
+        provideDocumentSemanticTokens(document) {
+          const analysis = store.ensure(document.uri.toString(), document.getText());
+          const builder = new SemanticTokensBuilder(SEMANTIC_LEGEND);
+          for (const span of semanticTokensFor(analysis, store.all())) {
+            builder.push(
+              span.line,
+              span.character,
+              span.length,
+              SEMANTIC_TOKEN_TYPES.indexOf(span.type),
+              span.modifiers.reduce(
+                (bits, modifier) => bits | (1 << SEMANTIC_TOKEN_MODIFIERS.indexOf(modifier)),
+                0,
+              ),
+            );
+          }
+          return builder.build();
+        },
+      },
+      SEMANTIC_LEGEND,
+    ),
   );
 }

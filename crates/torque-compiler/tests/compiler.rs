@@ -304,6 +304,23 @@ macro Main(x: Number): Number { return x; }
 }
 
 #[test]
+fn records_let_const_and_label_kinds() {
+    let source = r#"
+macro Main(a: Smi): Smi labels Fail {
+  const x: Smi = a;
+  let y: Smi = x;
+  goto Fail;
+  return y;
+}
+"#;
+    let file = compile_one("memory://kinds.tq", source.trim());
+    let names = names(&file);
+    assert!(names.iter().any(|n| n == "const:x"), "{names:?}");
+    assert!(names.iter().any(|n| n == "let:y"), "{names:?}");
+    assert!(names.iter().any(|n| n == "label:Fail"), "{names:?}");
+}
+
+#[test]
 fn compile_json_returns_symbols_and_errors() {
     let json = torque_compiler::compile_json(
         r#"{"files":[{"uri":"memory://a.tq","text":"macro Wrong(x: Smi): String { return x; }"}]}"#,

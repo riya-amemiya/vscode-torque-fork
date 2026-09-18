@@ -1,136 +1,59 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Torque",
+  "scopeName": "source.torque",
   "patterns": [
     {
-      "name": "comment.line.double-slash.torque",
-      "begin": "//",
-      "end": "$"
+      "include": "#comments"
     },
     {
-      "name": "comment.block.torque",
-      "begin": "/\\*",
-      "end": "\\*/"
+      "include": "#strings"
     },
     {
-      "name": "support.function.torque",
-      "match": "\\b(assert|check|debug|unreachable|Cast|Convert|FromConstexpr|UnsafeCast)\\b"
+      "include": "#annotations"
     },
     {
-      "name": "constant.other.torque",
-      "match": "\\b(true|True|false|False|Undefined|Hole|Null|k[A-Z][A-Za-z0-9]+)\\b"
+      "include": "#include"
     },
     {
-      "begin": "\\b<(?=[A-Za-z][0-9A-Za-z_|, ]*>)",
-      "end": ">",
-      "patterns": [
-        {
-          "include": "#common"
-        },
-        {
-          "name": "support.type.torque",
-          "match": "([A-Za-z][0-9A-Za-z_]*)"
-        }
-      ]
+      "include": "#numbers"
     },
     {
-      "begin": "\\b(?=(macro|runtime|builtin)\\b)",
-      "end": ";|\\{",
-      "patterns": [
-        {
-          "begin": "\\(",
-          "end": "\\)",
-          "patterns": [
-            {
-              "include": "#common"
-            },
-            {
-              "match": "(([A-Za-z][0-9A-Za-z_]*):\\s*)?([A-Za-z][0-9A-Za-z_]*)",
-              "captures": {
-                "3": { "name": "support.type.torque" }
-              }
-            }
-          ]
-        },
-        {
-          "include": "#common"
-        }
-      ]
+      "include": "#constants"
     },
     {
-      "begin": "\\b(type)\\b",
-      "end": ";",
-      "captures": {
-        "1": {
-          "name": "keyword.other.torque"
-        }
-      },
-      "patterns": [
-        {
-          "include": "#common"
-        },
-        {
-          "name": "support.type.torque",
-          "match": "\\b([A-Za-z][0-9A-Za-z_]*)\\b"
-        }
-      ]
+      "include": "#builtins"
     },
     {
-      "name": "keyword.control.torque",
-      "match": "#include"
+      "include": "#generics"
+    },
+    {
+      "include": "#callable-signature"
+    },
+    {
+      "include": "#type-decl"
     },
     {
       "include": "#common"
     }
   ],
   "repository": {
-    "common": {
+    "comments": {
       "patterns": [
         {
-          "match": "\\b(extends)\\s+([A-Za-z0-9]+)",
-          "captures": {
-            "1": {
-              "name": "keyword.other.torque"
-            },
-            "2": {
-              "name": "support.type.torque"
-            }
-          }
+          "name": "comment.line.double-slash.torque",
+          "begin": "//",
+          "end": "$"
         },
         {
-          "name": "keyword.control.torque",
-          "match": "\\b(if|else|while|for|return|continue|break|goto|otherwise|try|label|catch)\\b"
-        },
-        {
-          "name": "keyword.other.torque",
-          "match": "\\b(constexpr|macro|builtin|runtime|intrinsic|javascript|implicit|js-implicit|deferred|label|labels|tail|let|generates|weak|extern|const|typeswitch|case|transient|transitioning|operator|namespace)\\b"
-        },
-        {
-          "name": "keyword.operator.torque",
-          "match": "\\b(=|\\*=)\\b"
-        },
-        {
-          "match": "\\b(class|new)\\s+([A-Za-z0-9]+)",
-          "captures": {
-            "1": {
-              "name": "keyword.other.torque"
-            },
-            "2": {
-              "name": "support.type.torque"
-            }
-          }
-        },
-        {
-          "match": "\\b(struct)\\s+([A-Za-z0-9]+)",
-          "captures": {
-            "1": {
-              "name": "keyword.other.torque"
-            },
-            "2": {
-              "name": "support.type.torque"
-            }
-          }
-        },
+          "name": "comment.block.torque",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
         {
           "name": "string.quoted.double.torque",
           "begin": "\"",
@@ -152,6 +75,239 @@
               "match": "\\\\."
             }
           ]
+        }
+      ]
+    },
+    "annotations": {
+      "name": "entity.other.attribute-name.torque",
+      "match": "@[A-Za-z_][A-Za-z0-9_]*"
+    },
+    "include": {
+      "name": "keyword.control.directive.include.torque",
+      "match": "#include"
+    },
+    "numbers": {
+      "name": "constant.numeric.torque",
+      "match": "\\b(?:0[xX][0-9a-fA-F]+|\\d+\\.\\d+|\\d+)\\b"
+    },
+    "constants": {
+      "name": "constant.language.torque",
+      "match": "\\b(true|True|false|False|Undefined|Hole|Null|k[A-Z][A-Za-z0-9]+)\\b"
+    },
+    "builtins": {
+      "name": "support.function.torque",
+      "match": "\\b(assert|check|debug|unreachable|Cast|Convert|FromConstexpr|UnsafeCast|Print|static_assert)\\b"
+    },
+    "builtin-types": {
+      "name": "support.type.builtin.torque",
+      "match": "\\b(Arguments|BigInt|Boolean|Context|FixedArray|FixedDoubleArray|HeapNumber|HeapObject|JSAny|JSArray|JSFunction|JSObject|JSProxy|JSReceiver|JSTypedArray|Map|MaybeObject|Name|NativeContext|Never|Number|Numeric|Object|Oddball|Smi|String|Symbol|Tagged|WeakHeapObject|bint|bool|float32|float64_or_hole|float64|int31|int32|int64|intptr|never|uint32|uint64|uintptr|void)\\b"
+    },
+    "generics": {
+      "begin": "\\b<(?=[A-Za-z][0-9A-Za-z_|, ]*>)",
+      "end": ">",
+      "patterns": [
+        {
+          "include": "#common"
+        },
+        {
+          "name": "entity.name.type.torque",
+          "match": "([A-Za-z][0-9A-Za-z_]*)"
+        }
+      ]
+    },
+    "callable-signature": {
+      "begin": "\\b(?=(macro|runtime|builtin|intrinsic)\\b)",
+      "end": ";|\\{",
+      "patterns": [
+        {
+          "begin": "\\(",
+          "end": "\\)",
+          "patterns": [
+            {
+              "include": "#common"
+            },
+            {
+              "match": "(([A-Za-z][0-9A-Za-z_]*):\\s*)?([A-Za-z][0-9A-Za-z_]*)",
+              "captures": {
+                "3": {
+                  "name": "entity.name.type.torque"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "include": "#common"
+        }
+      ]
+    },
+    "type-decl": {
+      "begin": "\\b(type)\\b",
+      "end": ";",
+      "captures": {
+        "1": {
+          "name": "keyword.other.torque"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#common"
+        },
+        {
+          "name": "entity.name.type.torque",
+          "match": "\\b([A-Za-z][0-9A-Za-z_]*)\\b"
+        }
+      ]
+    },
+    "const-let": {
+      "patterns": [
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.torque"
+            },
+            "2": {
+              "name": "variable.other.constant.torque"
+            }
+          }
+        },
+        {
+          "match": "\\b(let)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.torque"
+            },
+            "2": {
+              "name": "variable.other.readwrite.torque"
+            }
+          }
+        }
+      ]
+    },
+    "labels": {
+      "patterns": [
+        {
+          "match": "\\b(goto)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.torque"
+            },
+            "2": {
+              "name": "entity.name.label.torque"
+            }
+          }
+        },
+        {
+          "match": "\\b(label)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.torque"
+            },
+            "2": {
+              "name": "entity.name.label.torque"
+            }
+          }
+        },
+        {
+          "begin": "\\b(labels)\\b",
+          "end": "(?=\\{|;)",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.torque"
+            }
+          },
+          "patterns": [
+            {
+              "begin": "\\(",
+              "end": "\\)",
+              "patterns": [
+                {
+                  "include": "#common"
+                }
+              ]
+            },
+            {
+              "name": "entity.name.label.torque",
+              "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\b"
+            }
+          ]
+        }
+      ]
+    },
+    "common": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#annotations"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#builtins"
+        },
+        {
+          "include": "#const-let"
+        },
+        {
+          "include": "#labels"
+        },
+        {
+          "include": "#builtin-types"
+        },
+        {
+          "match": "\\b(extends)\\s+([A-Za-z0-9]+)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.torque"
+            },
+            "2": {
+              "name": "entity.name.type.torque"
+            }
+          }
+        },
+        {
+          "name": "keyword.control.torque",
+          "match": "\\b(if|else|while|for|return|continue|break|goto|otherwise|try|label|catch)\\b"
+        },
+        {
+          "name": "keyword.other.torque",
+          "match": "\\b(constexpr|macro|builtin|runtime|intrinsic|javascript|implicit|js-implicit|deferred|labels|tail|let|generates|weak|extern|const|typeswitch|case|transient|transitioning|operator|namespace|enum|shape|bitfield)\\b"
+        },
+        {
+          "name": "keyword.operator.torque",
+          "match": "==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|=>|->|\\+\\+|--|::|\\.\\.\\.|[+\\-*/%=<>!&|^~]"
+        },
+        {
+          "match": "\\b(class|new)\\s+([A-Za-z0-9]+)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.torque"
+            },
+            "2": {
+              "name": "entity.name.type.torque"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct)\\s+([A-Za-z0-9]+)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.torque"
+            },
+            "2": {
+              "name": "entity.name.type.torque"
+            }
+          }
         },
         {
           "begin": ":(\\s*)?",
@@ -161,17 +317,16 @@
               "include": "#common"
             },
             {
-              "name": "support.type.torque",
+              "name": "entity.name.type.torque",
               "match": "([A-Za-z][0-9A-Za-z_]*)"
             }
           ]
         },
         {
-          "name": "support.function.torque",
+          "name": "entity.name.function.torque",
           "match": "\\b[A-Za-z0-9_]+\\b(?=(<[ ,:A-Za-z0-9_]+>)?\\()"
         }
       ]
     }
-  },
-  "scopeName": "source.torque"
+  }
 }

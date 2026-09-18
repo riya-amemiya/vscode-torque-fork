@@ -23,6 +23,8 @@ export type TorqueSymbolKind =
   | "enum"
   | "field"
   | "intrinsic"
+  | "label"
+  | "let"
   | "macro"
   | "namespace"
   | "runtime"
@@ -37,6 +39,8 @@ const SYMBOL_KINDS: ReadonlySet<string> = new Set([
   "enum",
   "field",
   "intrinsic",
+  "label",
+  "let",
   "macro",
   "namespace",
   "runtime",
