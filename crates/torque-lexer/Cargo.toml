@@ -1,0 +1,6 @@
+[package]
+name = "torque-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lexical analysis for V8 Torque"

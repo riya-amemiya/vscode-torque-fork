@@ -14,9 +14,10 @@
 
 use std::collections::HashMap;
 
-use crate::ast::*;
-use crate::diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
-use crate::span::Span;
+use torque_ast::*;
+use torque_diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
+use torque_span::Span;
+
 use crate::types::{FieldInfo, TypeId, TypeKind, TypeStore};
 use serde::Serialize;
 

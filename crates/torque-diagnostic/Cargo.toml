@@ -1,0 +1,10 @@
+[package]
+name = "torque-diagnostic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Diagnostics and symbol records for the V8 Torque frontend"
+
+[dependencies]
+serde.workspace = true
+torque-span.workspace = true

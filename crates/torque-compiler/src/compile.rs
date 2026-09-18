@@ -14,8 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::check::{FileAnalysis, check_files};
-use crate::parser::parse_file;
+use torque_check::{FileAnalysis, check_files};
+use torque_parser::parse_file;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SourceFileInput {

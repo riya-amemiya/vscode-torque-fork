@@ -12,13 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
+mod lexer;
+mod token;
 
-mod compile;
-
-#[cfg(target_arch = "wasm32")]
-mod wasm;
-
-pub use compile::{CompileResult, SourceFileInput, compile, compile_json};
-pub use torque_check::FileAnalysis;
-pub use torque_diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
+pub use lexer::{delimiter_errors, tokenize};
+pub use token::{KEYWORDS, Token, TokenKind, is_keyword};

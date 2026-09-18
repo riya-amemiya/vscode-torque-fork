@@ -14,11 +14,7 @@
 
 #![allow(dead_code)]
 
-mod compile;
+mod check;
+mod types;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm;
-
-pub use compile::{CompileResult, SourceFileInput, compile, compile_json};
-pub use torque_check::FileAnalysis;
-pub use torque_diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
+pub use check::{FileAnalysis, check_files};
