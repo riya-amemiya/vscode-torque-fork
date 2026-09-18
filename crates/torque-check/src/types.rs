@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::span::Span;
+use torque_span::Span;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
@@ -524,7 +524,7 @@ impl TypeStore {
 #[cfg(test)]
 mod tests {
     use super::{FieldInfo, TypeKind, TypeStore};
-    use crate::span::Span;
+    use torque_span::Span;
 
     #[test]
     fn fields_of_survives_object_alias_to_child_union() {

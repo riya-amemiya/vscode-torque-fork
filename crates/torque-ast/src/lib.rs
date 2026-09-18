@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::span::Span;
+use torque_span::Span;
 
 #[derive(Clone, Debug)]
 pub struct Ident {

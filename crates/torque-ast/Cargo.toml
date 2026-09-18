@@ -1,0 +1,9 @@
+[package]
+name = "torque-ast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Abstract syntax tree for V8 Torque"
+
+[dependencies]
+torque-span.workspace = true

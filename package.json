@@ -26,7 +26,7 @@
     "lint": "oxlint",
     "package": "vsce package --no-dependencies",
     "test": "bun test src",
-    "test:compiler": "cargo test -p torque-compiler",
+    "test:compiler": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "bun run build:wasm && rolldown -c --minify",
     "watch": "rolldown -c --watch"

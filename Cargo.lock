@@ -87,12 +87,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "torque-ast"
+version = "0.1.0"
+dependencies = [
+ "torque-span",
+]
+
+[[package]]
+name = "torque-check"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "torque-ast",
+ "torque-diagnostic",
+ "torque-span",
+]
+
+[[package]]
 name = "torque-compiler"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "torque-check",
+ "torque-diagnostic",
+ "torque-parser",
 ]
+
+[[package]]
+name = "torque-diagnostic"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "torque-span",
+]
+
+[[package]]
+name = "torque-lexer"
+version = "0.1.0"
+
+[[package]]
+name = "torque-parser"
+version = "0.1.0"
+dependencies = [
+ "torque-ast",
+ "torque-diagnostic",
+ "torque-lexer",
+ "torque-span",
+]
+
+[[package]]
+name = "torque-span"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

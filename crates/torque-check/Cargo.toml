@@ -1,0 +1,12 @@
+[package]
+name = "torque-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Type checking and semantic analysis for V8 Torque"
+
+[dependencies]
+serde.workspace = true
+torque-ast.workspace = true
+torque-diagnostic.workspace = true
+torque-span.workspace = true

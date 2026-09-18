@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::ast::*;
-use crate::diagnostic::Diagnostic;
-use crate::lexer::{delimiter_errors, tokenize};
-use crate::span::Span;
-use crate::token::{Token, TokenKind};
+#![allow(dead_code)]
+
+use torque_ast::*;
+use torque_diagnostic::Diagnostic;
+use torque_lexer::{Token, TokenKind, delimiter_errors, tokenize};
+use torque_span::Span;
 
 pub struct ParseOutput {
     pub file: ParsedFile,
