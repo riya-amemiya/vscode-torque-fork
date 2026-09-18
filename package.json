@@ -1,7 +1,7 @@
 {
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Syntax highlighting, go-to-definition, completions, and a WASM Torque compiler for V8 Torque",
   "categories": [
     "Programming Languages"
@@ -97,7 +97,67 @@
         "scopeName": "source.torque",
         "path": "./syntaxes/torque.tmLanguage.json"
       }
-    ]
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "torque",
+        "scopes": {
+          "type": [
+            "entity.name.type.torque"
+          ],
+          "type.defaultLibrary": [
+            "support.type.builtin.torque"
+          ],
+          "variable": [
+            "variable.other.readwrite.torque"
+          ],
+          "variable.readonly": [
+            "variable.other.constant.torque"
+          ],
+          "label": [
+            "entity.name.label.torque",
+            "entity.name.function.torque"
+          ],
+          "function": [
+            "entity.name.function.torque"
+          ],
+          "macro": [
+            "entity.name.function.macro.torque",
+            "entity.name.function.torque"
+          ],
+          "property": [
+            "variable.other.property.torque"
+          ],
+          "namespace": [
+            "entity.name.namespace.torque"
+          ],
+          "class": [
+            "entity.name.type.class.torque"
+          ],
+          "struct": [
+            "entity.name.type.struct.torque"
+          ],
+          "enum": [
+            "entity.name.type.enum.torque"
+          ]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[torque]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "editor.semanticTokenColorCustomizations": {
+        "rules": {
+          "variable.readonly:torque": {
+            "fontStyle": "italic"
+          },
+          "label:torque": {
+            "fontStyle": "bold"
+          }
+        }
+      }
+    }
   },
   "activationEvents": [
     "onLanguage:torque",

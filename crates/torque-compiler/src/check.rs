@@ -1061,9 +1061,9 @@ impl Checker {
             );
         }
         for label in &callable.labels {
-            self.insert_value(Binding {
+            let binding = Binding {
                 name: label.name.name.clone(),
-                kind: "const".into(),
+                kind: "label".into(),
                 span: label.name.span,
                 uri: self.uri(label.name.span.file),
                 ty: self.void_ty,
@@ -1074,7 +1074,9 @@ impl Checker {
                 implicit_count: 0,
                 container: Some(callable.name.name.clone()),
                 detail: Some("label".into()),
-            });
+            };
+            self.add_symbol(&binding);
+            self.insert_value(binding);
         }
         if let Some(rest) = &callable.params.rest {
             let ty = self
@@ -1180,11 +1182,11 @@ impl Checker {
                 }
             }
             Stmt::Var {
+                is_const,
                 name,
                 ty,
                 init,
                 span,
-                ..
             } => {
                 let inferred = match (ty, init) {
                     (Some(ty), Some(init)) => {
@@ -1224,7 +1226,7 @@ impl Checker {
                 };
                 let binding = Binding {
                     name: name.name.clone(),
-                    kind: "const".into(),
+                    kind: if *is_const { "const" } else { "let" }.into(),
                     span: name.span,
                     uri: self.uri(name.span.file),
                     ty: inferred,
@@ -1278,9 +1280,9 @@ impl Checker {
                 for handler in handlers {
                     match handler {
                         TryHandler::Label { name, .. } => {
-                            self.insert_value(Binding {
+                            let binding = Binding {
                                 name: name.name.clone(),
-                                kind: "const".into(),
+                                kind: "label".into(),
                                 span: name.span,
                                 uri: self.uri(name.span.file),
                                 ty: self.void_ty,
@@ -1291,7 +1293,9 @@ impl Checker {
                                 implicit_count: 0,
                                 container: None,
                                 detail: Some("label".into()),
-                            });
+                            };
+                            self.add_symbol(&binding);
+                            self.insert_value(binding);
                         }
                         TryHandler::Catch { .. } => {}
                     }
