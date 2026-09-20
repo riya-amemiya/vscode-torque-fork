@@ -10,3 +10,4 @@ serde.workspace = true
 torque-ast.workspace = true
 torque-diagnostic.workspace = true
 torque-span.workspace = true
+umt_rust.workspace = true

@@ -18,6 +18,7 @@ use torque_ast::*;
 use torque_diagnostic::Diagnostic;
 use torque_lexer::{Token, TokenKind, delimiter_errors, tokenize};
 use torque_span::Span;
+use umt_rust::array::umt_uniq_by;
 
 #[derive(Clone, Debug)]
 pub struct ParseOutput {
@@ -1935,14 +1936,6 @@ pub fn parse_file(uri: String, text: String, file: u32) -> ParseOutput {
         diagnostics,
     };
     let decls = parser.parse_file();
-    let mut diagnostics = parser.diagnostics;
-    let mut unique = std::collections::BTreeMap::new();
-    for diagnostic in diagnostics.drain(..) {
-        unique.insert(
-            (diagnostic.start, diagnostic.end, diagnostic.message.clone()),
-            diagnostic,
-        );
-    }
     ParseOutput {
         file: ParsedFile {
             uri,
@@ -1950,6 +1943,8 @@ pub fn parse_file(uri: String, text: String, file: u32) -> ParseOutput {
             file,
             decls,
         },
-        diagnostics: unique.into_values().collect(),
+        diagnostics: umt_uniq_by(&parser.diagnostics, |diagnostic| {
+            (diagnostic.start, diagnostic.end, diagnostic.message.clone())
+        }),
     }
 }

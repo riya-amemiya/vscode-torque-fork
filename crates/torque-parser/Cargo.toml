@@ -10,3 +10,4 @@ torque-ast.workspace = true
 torque-diagnostic.workspace = true
 torque-lexer.workspace = true
 torque-span.workspace = true
+umt_rust.workspace = true

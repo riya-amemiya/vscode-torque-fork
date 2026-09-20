@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use torque_span::Span;
+use umt_rust::array::umt_unique;
+use umt_rust::string::umt_remove_prefix;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
@@ -93,7 +95,7 @@ impl TypeStore {
         if let TypeKind::Union { members } = &kind {
             let mut members = members.clone();
             members.sort_by_key(|id| id.0);
-            members.dedup();
+            let members = umt_unique(&members);
             for (index, existing) in self.types.iter().enumerate() {
                 if let TypeKind::Union {
                     members: existing_members,
@@ -173,8 +175,7 @@ impl TypeStore {
     }
 
     pub fn base_name(&self, id: TypeId) -> String {
-        let name = self.name_of(id);
-        name.strip_prefix("constexpr ").unwrap_or(&name).to_string()
+        umt_remove_prefix(&self.name_of(id), "constexpr ")
     }
 
     pub fn get(&self, id: TypeId) -> &TypeData {
@@ -320,7 +321,7 @@ impl TypeStore {
         self.collect_union(left, &mut members);
         self.collect_union(right, &mut members);
         members.sort_by_key(|id| id.0);
-        members.dedup();
+        let members = umt_unique(&members);
         if members.len() == 1 {
             return members[0];
         }

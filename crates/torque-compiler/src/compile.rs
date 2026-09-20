@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use torque_check::{FileAnalysis, check_files_select, check_incremental, env_uri_index};
 use torque_parser::{ParseOutput, parse_file};
+use umt_rust::data_structure::LRUCache;
+use umt_rust::tool::umt_parse_json;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SourceFileInput {
@@ -39,8 +40,11 @@ struct CachedParse {
     output: ParseOutput,
 }
 
+const PARSE_CACHE_CAPACITY: usize = 4096;
+
 thread_local! {
-    static PARSE_CACHE: RefCell<HashMap<String, CachedParse>> = RefCell::new(HashMap::new());
+    static PARSE_CACHE: RefCell<LRUCache<String, CachedParse>> =
+        RefCell::new(LRUCache::new(PARSE_CACHE_CAPACITY));
     static PARSE_COUNT: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -55,7 +59,7 @@ fn parse_cached(uri: String, text: String, file: u32) -> ParseOutput {
         }
         PARSE_COUNT.with(|count| count.set(count.get() + 1));
         let output = parse_file(uri.clone(), text.clone(), file);
-        cache.insert(
+        cache.set(
             uri,
             CachedParse {
                 text,
@@ -109,7 +113,7 @@ pub fn compile_json(input: &str) -> String {
         #[serde(default)]
         incremental: bool,
     }
-    match serde_json::from_str::<Input>(input) {
+    match umt_parse_json::<Input>(input) {
         Ok(parsed) if parsed.incremental && parsed.files.len() == 1 => {
             let file = &parsed.files[0];
             serde_json::to_string(&compile_incremental(&file.uri, &file.text).unwrap_or(

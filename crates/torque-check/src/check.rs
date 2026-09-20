@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use torque_ast::*;
 use torque_diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
 use torque_span::Span;
+use umt_rust::array::{umt_group_by, umt_uniq_by};
 
 use crate::types::{FieldInfo, TypeId, TypeKind, TypeStore};
 use serde::Serialize;
@@ -3158,12 +3159,7 @@ pub fn check_incremental(
         checker.check_decls(&file.decls);
         checker.diagnostics.extend(parse_diagnostics);
         let mut analysis = checker.analysis_of(&file);
-        analysis.diagnostics.sort_by_key(|diagnostic| {
-            (diagnostic.start, diagnostic.end, diagnostic.message.clone())
-        });
-        analysis.diagnostics.dedup_by(|left, right| {
-            left.start == right.start && left.end == right.end && left.message == right.message
-        });
+        analysis.diagnostics = unique_sorted_diagnostics(analysis.diagnostics);
         Some(analysis)
     })
 }
@@ -3212,33 +3208,34 @@ pub fn check_files_select(
     ENV.with(|slot| {
         *slot.borrow_mut() = Some(checker.clone());
     });
-    for diagnostic in &checker.diagnostics {
-        if let Some(file) = analyses.get_mut(diagnostic.file as usize) {
-            file.diagnostics.push(diagnostic.clone());
+    for (file, diagnostics) in umt_group_by(&checker.diagnostics, |diagnostic| diagnostic.file) {
+        if let Some(analysis) = analyses.get_mut(file as usize) {
+            analysis.diagnostics = unique_sorted_diagnostics(diagnostics);
         }
     }
-    for (file, symbol) in &checker.symbols {
-        if let Some(analysis) = analyses.get_mut(*file as usize) {
-            analysis.symbols.push(symbol.clone());
+    for (file, symbols) in umt_group_by(&checker.symbols, |(file, _)| *file) {
+        if let Some(analysis) = analyses.get_mut(file as usize) {
+            analysis.symbols = symbols.into_iter().map(|(_, symbol)| symbol).collect();
         }
     }
-    for (file, include) in &checker.includes {
-        if let Some(analysis) = analyses.get_mut(*file as usize) {
-            analysis.includes.push(include.clone());
+    for (file, includes) in umt_group_by(&checker.includes, |(file, _)| *file) {
+        if let Some(analysis) = analyses.get_mut(file as usize) {
+            analysis.includes = includes.into_iter().map(|(_, include)| include).collect();
         }
     }
-    for definition in &checker.definitions {
-        if let Some(analysis) = analyses.get_mut(definition.from_file as usize) {
-            analysis.definitions.push(definition.clone());
+    for (file, definitions) in umt_group_by(&checker.definitions, |definition| definition.from_file)
+    {
+        if let Some(analysis) = analyses.get_mut(file as usize) {
+            analysis.definitions = definitions;
         }
-    }
-    for analysis in &mut analyses {
-        analysis.diagnostics.sort_by_key(|diagnostic| {
-            (diagnostic.start, diagnostic.end, diagnostic.message.clone())
-        });
-        analysis.diagnostics.dedup_by(|left, right| {
-            left.start == right.start && left.end == right.end && left.message == right.message
-        });
     }
     analyses
+}
+
+fn unique_sorted_diagnostics(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    diagnostics
+        .sort_by_key(|diagnostic| (diagnostic.start, diagnostic.end, diagnostic.message.clone()));
+    umt_uniq_by(&diagnostics, |diagnostic| {
+        (diagnostic.start, diagnostic.end, diagnostic.message.clone())
+    })
 }

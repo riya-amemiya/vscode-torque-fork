@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use umt_rust::array::umt_binary_search;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     Annotation,
@@ -85,5 +87,26 @@ pub const KEYWORDS: &[&str] = &[
 ];
 
 pub fn is_keyword(text: &str) -> bool {
-    KEYWORDS.contains(&text)
+    umt_binary_search(KEYWORDS, text).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KEYWORDS, is_keyword};
+
+    #[test]
+    fn keywords_stay_sorted_for_binary_search() {
+        let mut sorted = KEYWORDS.to_vec();
+        sorted.sort();
+        assert_eq!(KEYWORDS, sorted.as_slice());
+    }
+
+    #[test]
+    fn classifies_hyphenated_and_plain_keywords() {
+        assert!(is_keyword("javascript"));
+        assert!(is_keyword("js-implicit"));
+        assert!(is_keyword("bitfield"));
+        assert!(is_keyword("while"));
+        assert!(!is_keyword("Foo"));
+    }
 }

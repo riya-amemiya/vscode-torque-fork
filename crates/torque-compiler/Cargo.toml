@@ -14,3 +14,4 @@ serde_json.workspace = true
 torque-check.workspace = true
 torque-diagnostic.workspace = true
 torque-parser.workspace = true
+umt_rust.workspace = true
