@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import { resolveDefinition, type DocumentAnalysis, type TorqueSymbolKind } from "./analyze";
-import { TORQUE_BUILTINS, TORQUE_COMMON_TYPES } from "./keywords";
+import { TORQUE_BUILTINS } from "./keywords";
 import type { Token } from "./lexer";
 import { rangeFromOffsets } from "./positions";
 
@@ -53,13 +53,173 @@ const VALUE_NAMES: ReadonlySet<string> = new Set([
   "false",
 ]);
 
-const BUILTIN_TYPES: ReadonlySet<string> = new Set(
-  [...TORQUE_COMMON_TYPES, "Tagged", "Arguments", "MaybeObject"].filter(
-    (name) => !VALUE_NAMES.has(name),
-  ),
-);
-
 const BUILTIN_FUNCTIONS: ReadonlySet<string> = new Set(TORQUE_BUILTINS.map((item) => item.name));
+
+const GENERIC_INNER = new Set([",", ":", "|", "&", "::", "."]);
+
+const TYPE_INTRODUCERS = new Set([
+  ":",
+  "extends",
+  "type",
+  "class",
+  "struct",
+  "enum",
+  "shape",
+  "new",
+]);
+
+function isTypeExprToken(token: Token): boolean {
+  if (token.kind === "identifier") {
+    return true;
+  }
+  if (token.text === "|" || token.text === "&" || token.text === "::" || token.text === ".") {
+    return true;
+  }
+  return (
+    token.text === "constexpr" ||
+    token.text === "weak" ||
+    token.text === "void" ||
+    token.text === "never"
+  );
+}
+
+function lastNonTypeExpr(tokens: readonly Token[], index: number): number {
+  if (index < 0) {
+    return -1;
+  }
+  if (isTypeExprToken(tokens[index])) {
+    return lastNonTypeExpr(tokens, index - 1);
+  }
+  return index;
+}
+
+function typeKeywordBefore(tokens: readonly Token[], index: number): boolean {
+  if (index < 0) {
+    return false;
+  }
+  const token = tokens[index];
+  if (token.text === ";" || token.text === "{") {
+    return false;
+  }
+  if (token.text === "type") {
+    return true;
+  }
+  if (
+    token.kind === "identifier" ||
+    token.text === "<" ||
+    token.text === ">" ||
+    token.text === "," ||
+    token.text === ":" ||
+    token.text === "extends" ||
+    token.text === "constexpr"
+  ) {
+    return typeKeywordBefore(tokens, index - 1);
+  }
+  return false;
+}
+
+function isGenericInnerToken(token: Token): boolean {
+  if (token.kind === "identifier" || token.kind === "keyword") {
+    return true;
+  }
+  return GENERIC_INNER.has(token.text);
+}
+
+function findOpenAngle(
+  tokens: readonly Token[],
+  index: number,
+  extraCloses: number,
+): number | undefined {
+  if (index < 0) {
+    return undefined;
+  }
+  const token = tokens[index];
+  if (token.text === ";" || token.text === "{" || token.text === "}") {
+    return undefined;
+  }
+  if (token.text === "<") {
+    if (extraCloses === 0) {
+      return index;
+    }
+    return findOpenAngle(tokens, index - 1, extraCloses - 1);
+  }
+  if (token.text === ">") {
+    return findOpenAngle(tokens, index - 1, extraCloses + 1);
+  }
+  return findOpenAngle(tokens, index - 1, extraCloses);
+}
+
+function scanGeneric(tokens: readonly Token[], index: number, extraOpens: number): boolean {
+  if (index >= tokens.length) {
+    return false;
+  }
+  const token = tokens[index];
+  if (token.text === ";" || token.text === "{") {
+    return false;
+  }
+  if (token.text === "<") {
+    return scanGeneric(tokens, index + 1, extraOpens + 1);
+  }
+  if (token.text === ">") {
+    if (extraOpens === 0) {
+      return true;
+    }
+    return scanGeneric(tokens, index + 1, extraOpens - 1);
+  }
+  if (!isGenericInnerToken(token)) {
+    return false;
+  }
+  return scanGeneric(tokens, index + 1, extraOpens);
+}
+
+function insideGenericArgs(tokens: readonly Token[], index: number): boolean {
+  const open = findOpenAngle(tokens, index - 1, 0);
+  if (open === undefined || open === 0) {
+    return false;
+  }
+  const before = tokens[open - 1];
+  if (before === undefined) {
+    return false;
+  }
+  if (before.kind !== "identifier" && before.kind !== "keyword") {
+    return false;
+  }
+  return scanGeneric(tokens, index, 0);
+}
+
+function isTypeKind(kind: TorqueSymbolKind): boolean {
+  return (
+    kind === "type" || kind === "class" || kind === "struct" || kind === "enum" || kind === "shape"
+  );
+}
+
+function isKnownTypeName(
+  analysis: DocumentAnalysis,
+  workspace: readonly DocumentAnalysis[],
+  name: string,
+): boolean {
+  if (analysis.builtinTypes.includes(name)) {
+    return true;
+  }
+  return [analysis, ...workspace].some((document) =>
+    document.symbols.some((symbol) => symbol.name === name && isTypeKind(symbol.kind)),
+  );
+}
+
+function inTypePosition(tokens: readonly Token[], index: number): boolean {
+  if (insideGenericArgs(tokens, index)) {
+    return true;
+  }
+  const intro = lastNonTypeExpr(tokens, index - 1);
+  if (intro < 0) {
+    return false;
+  }
+  const token = tokens[intro];
+  if (TYPE_INTRODUCERS.has(token.text)) {
+    return true;
+  }
+  return token.text === "=" && typeKeywordBefore(tokens, intro - 1);
+}
 
 function typeFor(kind: TorqueSymbolKind): SemanticTokenType {
   switch (kind) {
@@ -150,8 +310,16 @@ function classificationFor(
       modifiers: modifiersFor(resolved.kind, false, false),
     };
   }
-  if (BUILTIN_TYPES.has(token.text)) {
-    return { type: "type", modifiers: ["defaultLibrary"] };
+  const index = analysis.tokens.indexOf(token);
+  if (
+    index >= 0 &&
+    token.kind === "identifier" &&
+    !VALUE_NAMES.has(token.text) &&
+    inTypePosition(analysis.tokens, index) &&
+    isKnownTypeName(analysis, workspace, token.text)
+  ) {
+    const library = analysis.builtinTypes.includes(token.text);
+    return { type: "type", modifiers: library ? ["defaultLibrary"] : [] };
   }
   if (BUILTIN_FUNCTIONS.has(token.text)) {
     return { type: "function", modifiers: ["defaultLibrary"] };

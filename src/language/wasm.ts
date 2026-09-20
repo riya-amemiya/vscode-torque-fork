@@ -51,6 +51,7 @@ export type CompilerFile = {
   symbols: CompilerSymbol[];
   includes: CompilerInclude[];
   definitions: CompilerDefinition[];
+  builtinTypes?: string[];
 };
 
 type WasmExports = {
@@ -66,6 +67,7 @@ const decoder = new TextDecoder();
 
 let wasmExports: WasmExports | undefined;
 let lastParseCountValue = 0;
+let lastInputFileCountValue = 0;
 
 function wasmCandidates(): string[] {
   const here = typeof __dirname === "string" ? __dirname : process.cwd();
@@ -111,14 +113,29 @@ export function lastCompileParseCount(): number {
   return lastParseCountValue;
 }
 
-export function compileSources(files: Array<{ uri: string; text: string }>): CompilerFile[] {
+export function lastCompileInputFileCount(): number {
+  return lastInputFileCountValue;
+}
+
+export function compileSources(
+  files: Array<{ uri: string; text: string }>,
+  checkUris?: readonly string[],
+  incremental = false,
+): CompilerFile[] {
   ensureTorqueCompiler();
   const wasm = wasmExports;
   if (wasm === undefined) {
     throw new Error("Torque WASM compiler is not loaded");
   }
   try {
-    const payload = encoder.encode(JSON.stringify({ files }));
+    lastInputFileCountValue = files.length;
+    const payload = encoder.encode(
+      JSON.stringify({
+        files,
+        ...(checkUris === undefined ? {} : { checkUris }),
+        ...(incremental ? { incremental: true } : {}),
+      }),
+    );
     const ptr = wasm.torque_alloc(payload.length);
     new Uint8Array(wasm.memory.buffer).set(payload, ptr);
     const outPtr = wasm.torque_compile(ptr, payload.length);

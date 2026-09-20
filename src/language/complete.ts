@@ -16,7 +16,6 @@ import type { DocumentAnalysis } from "./analyze";
 import {
   TORQUE_ANNOTATIONS,
   TORQUE_BUILTINS,
-  TORQUE_COMMON_TYPES,
   TORQUE_KEYWORD_DOCS,
   TORQUE_KEYWORDS,
   TORQUE_SNIPPETS,
@@ -141,15 +140,17 @@ export function completionsFor(
     }
   }
 
-  for (const typeName of TORQUE_COMMON_TYPES) {
-    if (matchesPrefix(typeName, prefix)) {
-      add({
-        label: typeName,
-        kind: "type",
-        detail: "type",
-        sortText: `3_${typeName}`,
-      });
+  const oddballs = new Set(["True", "False", "Null", "Undefined", "Hole"]);
+  for (const typeName of analysis.builtinTypes) {
+    if (oddballs.has(typeName) || !matchesPrefix(typeName, prefix)) {
+      continue;
     }
+    add({
+      label: typeName,
+      kind: "type",
+      detail: "type",
+      sortText: `3_${typeName}`,
+    });
   }
 
   for (const document of [analysis, ...workspace]) {
@@ -157,11 +158,17 @@ export function completionsFor(
       if (!matchesPrefix(symbol.name, prefix)) {
         continue;
       }
+      const typeKind =
+        symbol.kind === "type" ||
+        symbol.kind === "class" ||
+        symbol.kind === "struct" ||
+        symbol.kind === "enum" ||
+        symbol.kind === "shape";
       add({
         label: symbol.name,
-        kind: "symbol",
+        kind: typeKind ? "type" : "symbol",
         detail: symbol.detail ?? symbol.kind,
-        sortText: `4_${symbol.name}`,
+        sortText: `${typeKind ? "3" : "4"}_${symbol.name}`,
       });
     }
   }

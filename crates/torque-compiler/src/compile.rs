@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use torque_check::{FileAnalysis, check_files};
+use torque_check::{FileAnalysis, check_files_select, check_incremental, env_uri_index};
 use torque_parser::{ParseOutput, parse_file};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -68,6 +68,13 @@ fn parse_cached(uri: String, text: String, file: u32) -> ParseOutput {
 }
 
 pub fn compile(files: &[SourceFileInput]) -> CompileResult {
+    compile_with_check(files, None)
+}
+
+pub fn compile_with_check(
+    files: &[SourceFileInput],
+    check_uris: Option<&[String]>,
+) -> CompileResult {
     PARSE_COUNT.with(|count| count.set(0));
     let mut parsed = Vec::new();
     let mut parse_diagnostics = Vec::new();
@@ -77,19 +84,47 @@ pub fn compile(files: &[SourceFileInput]) -> CompileResult {
         parsed.push(output.file);
     }
     CompileResult {
-        files: check_files(&parsed, parse_diagnostics),
+        files: check_files_select(&parsed, parse_diagnostics, check_uris),
         parse_count: PARSE_COUNT.with(|count| count.get()),
     }
+}
+
+pub fn compile_incremental(uri: &str, text: &str) -> Option<CompileResult> {
+    let index = env_uri_index(uri)?;
+    PARSE_COUNT.with(|count| count.set(0));
+    let output = parse_cached(uri.to_string(), text.to_string(), index);
+    let analysis = check_incremental(output.file, output.diagnostics)?;
+    Some(CompileResult {
+        files: vec![analysis],
+        parse_count: PARSE_COUNT.with(|count| count.get()),
+    })
 }
 
 pub fn compile_json(input: &str) -> String {
     #[derive(Deserialize)]
     struct Input {
         files: Vec<SourceFileInput>,
+        #[serde(default, rename = "checkUris")]
+        check_uris: Option<Vec<String>>,
+        #[serde(default)]
+        incremental: bool,
     }
     match serde_json::from_str::<Input>(input) {
-        Ok(parsed) => serde_json::to_string(&compile(&parsed.files))
-            .unwrap_or_else(|_| "{\"files\":[]}".into()),
+        Ok(parsed) if parsed.incremental && parsed.files.len() == 1 => {
+            let file = &parsed.files[0];
+            serde_json::to_string(&compile_incremental(&file.uri, &file.text).unwrap_or(
+                CompileResult {
+                    files: Vec::new(),
+                    parse_count: 0,
+                },
+            ))
+            .unwrap_or_else(|_| "{\"files\":[],\"parseCount\":0}".into())
+        }
+        Ok(parsed) => serde_json::to_string(&compile_with_check(
+            &parsed.files,
+            parsed.check_uris.as_deref(),
+        ))
+        .unwrap_or_else(|_| "{\"files\":[]}".into()),
         Err(error) => serde_json::json!({
             "files": [{
                 "uri": "",

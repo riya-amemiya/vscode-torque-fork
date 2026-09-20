@@ -17,4 +17,4 @@
 mod check;
 mod types;
 
-pub use check::{FileAnalysis, check_files};
+pub use check::{FileAnalysis, check_files, check_files_select, check_incremental, env_uri_index};

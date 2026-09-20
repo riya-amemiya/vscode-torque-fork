@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use torque_ast::*;
 use torque_diagnostic::{Definition, Diagnostic, IncludeInfo, SymbolInfo};
@@ -29,6 +30,7 @@ pub struct FileAnalysis {
     pub symbols: Vec<SymbolInfo>,
     pub includes: Vec<IncludeInfo>,
     pub definitions: Vec<Definition>,
+    pub builtin_types: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,10 +55,12 @@ enum CallMatch {
     InferFail(String),
 }
 
+#[derive(Clone, Debug)]
 struct Scope {
     values: HashMap<String, Binding>,
 }
 
+#[derive(Clone, Debug)]
 struct Checker {
     uris: Vec<String>,
     types: TypeStore,
@@ -74,6 +78,7 @@ struct Checker {
     int_lit_ty: TypeId,
     string_lit_ty: TypeId,
     current_return: TypeId,
+    report_unknown_types: bool,
 }
 
 const PRELUDE_TYPES: &[&str] = &[
@@ -139,6 +144,7 @@ impl Checker {
             int_lit_ty,
             string_lit_ty,
             current_return: void_ty,
+            report_unknown_types: true,
         }
     }
 
@@ -384,6 +390,9 @@ impl Checker {
                     }
                     return applied;
                 }
+                if self.report_unknown_types {
+                    self.error(name.span, format!("Cannot resolve type '{}'", name.name));
+                }
                 let id = self.intern_unknown_type(name);
                 let applied = self.apply_type_args(id, generic_args, name.span);
                 if *is_constexpr {
@@ -421,6 +430,14 @@ impl Checker {
                 self.apply_named(name, vec![inner_id], *span)
             }
         }
+    }
+
+    fn resolve_type_expr_allow_unknown(&mut self, expr: &TypeExpr) -> TypeId {
+        let previous = self.report_unknown_types;
+        self.report_unknown_types = false;
+        let id = self.resolve_type_expr(expr);
+        self.report_unknown_types = previous;
+        id
     }
 
     fn intern_unknown_type(&mut self, name: &Ident) -> TypeId {
@@ -679,7 +696,9 @@ impl Checker {
                 } => {
                     let saved = self.push_generic_params(generic_params);
                     self.bind_generic_param_symbols(generic_params, Some(&name.name));
-                    let parent = extends.as_ref().map(|ty| self.resolve_type_expr(ty));
+                    let parent = extends
+                        .as_ref()
+                        .map(|ty| self.resolve_type_expr_allow_unknown(ty));
                     self.pop_generic_params(saved);
                     if let Some(id) = self.types_by_name.get(&name.name).copied()
                         && !matches!(
@@ -700,15 +719,26 @@ impl Checker {
                 }
                 Decl::Class {
                     name,
+                    is_extern,
                     extends,
                     fields,
                     methods,
                     ..
                 } => {
-                    let parent = extends.as_ref().map(|ty| self.resolve_type_expr(ty));
+                    let parent = extends.as_ref().map(|ty| {
+                        if *is_extern {
+                            self.resolve_type_expr_allow_unknown(ty)
+                        } else {
+                            self.resolve_type_expr(ty)
+                        }
+                    });
                     let mut field_infos = Vec::new();
                     for field in fields {
-                        let ty = self.resolve_type_expr(&field.ty);
+                        let ty = if *is_extern {
+                            self.resolve_type_expr_allow_unknown(&field.ty)
+                        } else {
+                            self.resolve_type_expr(&field.ty)
+                        };
                         self.define_type_uses(&field.ty);
                         field_infos.push(FieldInfo {
                             name: field.name.name.clone(),
@@ -2940,6 +2970,79 @@ impl Checker {
         ];
         NAMES.iter().any(|item| name == *item) || name.contains("JS")
     }
+
+    fn is_dummy_span(span: Span) -> bool {
+        span.file == 0 && span.start == 0 && span.end == 0
+    }
+
+    fn strip_file(&mut self, file: u32) {
+        self.diagnostics.retain(|item| item.file != file);
+        self.definitions.retain(|item| item.from_file != file);
+        self.symbols.retain(|(item_file, _)| *item_file != file);
+        self.includes.retain(|(item_file, _)| *item_file != file);
+        let drop_types: HashSet<TypeId> = self
+            .types
+            .iter()
+            .filter(|(_, data)| data.span.file == file && !Self::is_dummy_span(data.span))
+            .map(|(id, _)| id)
+            .collect();
+        self.types_by_name.retain(|_, id| !drop_types.contains(id));
+        self.bindings
+            .retain(|binding| binding.span.file != file || Self::is_dummy_span(binding.span));
+        self.callables.clear();
+        for (index, binding) in self.bindings.iter().enumerate() {
+            self.callables
+                .entry(binding.name.clone())
+                .or_default()
+                .push(index);
+            if let Some(op) = &binding.operator_name {
+                self.callables.entry(op.clone()).or_default().push(index);
+            }
+        }
+        while self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.values.retain(|_, binding| {
+                binding.span.file != file || Self::is_dummy_span(binding.span)
+            });
+        }
+        self.current_return = self.void_ty;
+    }
+
+    fn analysis_of(&self, file: &ParsedFile) -> FileAnalysis {
+        FileAnalysis {
+            uri: file.uri.clone(),
+            diagnostics: self
+                .diagnostics
+                .iter()
+                .filter(|item| item.file == file.file)
+                .cloned()
+                .collect(),
+            symbols: self
+                .symbols
+                .iter()
+                .filter(|(item_file, _)| *item_file == file.file)
+                .map(|(_, symbol)| symbol.clone())
+                .collect(),
+            includes: self
+                .includes
+                .iter()
+                .filter(|(item_file, _)| *item_file == file.file)
+                .map(|(_, include)| include.clone())
+                .collect(),
+            definitions: self
+                .definitions
+                .iter()
+                .filter(|item| item.from_file == file.file)
+                .cloned()
+                .collect(),
+            builtin_types: PRELUDE_TYPES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        }
+    }
 }
 
 fn prefer_match(left: CallMatch, right: CallMatch) -> CallMatch {
@@ -3022,7 +3125,54 @@ fn is_operator(name: &str) -> bool {
     )
 }
 
+thread_local! {
+    static ENV: RefCell<Option<Checker>> = const { RefCell::new(None) };
+}
+
 pub fn check_files(files: &[ParsedFile], parse_diagnostics: Vec<Diagnostic>) -> Vec<FileAnalysis> {
+    check_files_select(files, parse_diagnostics, None)
+}
+
+pub fn env_uri_index(uri: &str) -> Option<u32> {
+    ENV.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|checker| checker.uris.iter().position(|item| item == uri))
+            .map(|index| index as u32)
+    })
+}
+
+pub fn check_incremental(
+    file: ParsedFile,
+    parse_diagnostics: Vec<Diagnostic>,
+) -> Option<FileAnalysis> {
+    ENV.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let checker = slot.as_mut()?;
+        if !checker.uris.iter().any(|uri| uri == &file.uri) {
+            return None;
+        }
+        checker.strip_file(file.file);
+        checker.predeclare(&file.decls, "");
+        checker.bind_decls(&file.decls, "");
+        checker.check_decls(&file.decls);
+        checker.diagnostics.extend(parse_diagnostics);
+        let mut analysis = checker.analysis_of(&file);
+        analysis.diagnostics.sort_by_key(|diagnostic| {
+            (diagnostic.start, diagnostic.end, diagnostic.message.clone())
+        });
+        analysis.diagnostics.dedup_by(|left, right| {
+            left.start == right.start && left.end == right.end && left.message == right.message
+        });
+        Some(analysis)
+    })
+}
+
+pub fn check_files_select(
+    files: &[ParsedFile],
+    parse_diagnostics: Vec<Diagnostic>,
+    check_uris: Option<&[String]>,
+) -> Vec<FileAnalysis> {
     let uris: Vec<String> = files.iter().map(|file| file.uri.clone()).collect();
     let mut checker = Checker::new(uris);
     for file in files {
@@ -3032,8 +3182,15 @@ pub fn check_files(files: &[ParsedFile], parse_diagnostics: Vec<Diagnostic>) -> 
     for file in files {
         checker.bind_decls(&file.decls, "");
     }
+    let check_set: Option<HashSet<&str>> =
+        check_uris.map(|uris| uris.iter().map(String::as_str).collect());
     for file in files {
-        checker.check_decls(&file.decls);
+        if check_set
+            .as_ref()
+            .is_none_or(|set| set.contains(file.uri.as_str()))
+        {
+            checker.check_decls(&file.decls);
+        }
     }
     checker.diagnostics.extend(parse_diagnostics);
 
@@ -3045,27 +3202,34 @@ pub fn check_files(files: &[ParsedFile], parse_diagnostics: Vec<Diagnostic>) -> 
             symbols: Vec::new(),
             includes: Vec::new(),
             definitions: Vec::new(),
+            builtin_types: PRELUDE_TYPES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
         })
         .collect();
 
-    for diagnostic in checker.diagnostics {
+    ENV.with(|slot| {
+        *slot.borrow_mut() = Some(checker.clone());
+    });
+    for diagnostic in &checker.diagnostics {
         if let Some(file) = analyses.get_mut(diagnostic.file as usize) {
-            file.diagnostics.push(diagnostic);
+            file.diagnostics.push(diagnostic.clone());
         }
     }
-    for (file, symbol) in checker.symbols {
-        if let Some(analysis) = analyses.get_mut(file as usize) {
-            analysis.symbols.push(symbol);
+    for (file, symbol) in &checker.symbols {
+        if let Some(analysis) = analyses.get_mut(*file as usize) {
+            analysis.symbols.push(symbol.clone());
         }
     }
-    for (file, include) in checker.includes {
-        if let Some(analysis) = analyses.get_mut(file as usize) {
-            analysis.includes.push(include);
+    for (file, include) in &checker.includes {
+        if let Some(analysis) = analyses.get_mut(*file as usize) {
+            analysis.includes.push(include.clone());
         }
     }
-    for definition in checker.definitions {
+    for definition in &checker.definitions {
         if let Some(analysis) = analyses.get_mut(definition.from_file as usize) {
-            analysis.definitions.push(definition);
+            analysis.definitions.push(definition.clone());
         }
     }
     for analysis in &mut analyses {
