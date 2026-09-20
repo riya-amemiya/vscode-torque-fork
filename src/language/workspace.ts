@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {
-  analyzeDocument,
-  analyzeDocuments,
-  dropResolvedElsewhere,
-  type DocumentAnalysis,
-} from "./analyze";
+import { analyzeDocument, analyzeDocuments, type DocumentAnalysis } from "./analyze";
 
 export class TorqueWorkspace {
   private readonly sources = new Map<string, string>();
@@ -74,10 +69,11 @@ export class TorqueWorkspace {
     if (current !== undefined && current.text === text) {
       return current;
     }
-    const siblings = [...this.documents.entries()]
-      .filter(([itemUri]) => itemUri !== uri)
-      .map(([, document]) => document);
-    const analysis = dropResolvedElsewhere(analyzeDocument(text, uri), siblings);
+    const compiled = analyzeDocuments([{ uri, text }], [uri], true);
+    const analysis = compiled.get(uri);
+    if (analysis === undefined) {
+      throw new Error(`Torque compiler did not return analysis for ${uri}`);
+    }
     this.documents.set(uri, analysis);
     return analysis;
   }

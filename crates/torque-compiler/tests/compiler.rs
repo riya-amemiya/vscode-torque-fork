@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use torque_compiler::{SourceFileInput, compile};
+use torque_compiler::{SourceFileInput, compile, compile_incremental, compile_with_check};
 
 const SAMPLE: &str = r#"
 namespace math {
@@ -1861,4 +1861,124 @@ fn compile_reuses_parse_of_unchanged_uri_and_text() {
         },
     ]);
     assert_eq!(second.parse_count, 1);
+}
+
+#[test]
+fn compile_with_check_sees_sibling_the_hole_and_string_fields() {
+    let objects = r#"
+extern class HeapObject {
+  const map: Map;
+}
+extern class PrimitiveHeapObject extends HeapObject {}
+extern class Name extends PrimitiveHeapObject {}
+extern class String extends Name {}
+extern operator '.length_intptr' macro LoadStringLengthAsWord(String): intptr;
+extern class Map {
+  elements_kind: ElementsKind;
+}
+extern enum ElementsKind { PACKED_SMI_ELEMENTS }
+extern class JSReceiver extends HeapObject {}
+extern class Boolean extends PrimitiveHeapObject {
+  to_string: String;
+}
+extern class Null extends PrimitiveHeapObject {}
+type TheHole;
+extern macro TheHoleConstant(): TheHole;
+const TheHole: TheHole = TheHoleConstant();
+"#;
+    let join = r#"
+macro ArrayPrototypeJoinImpl(array: JSReceiver, len: Number, separator: String): String {
+  return separator;
+}
+macro CycleProtectedArrayJoin<T: type>(
+    toLocale: bool, array: T, len: Number, separator: String, locales: JSAny, options: JSAny): String {
+  return separator;
+}
+macro UseJoinNames(
+    array: JSReceiver, str: String, m: Map, b: Boolean, rec: JSReceiver, n: Null,
+    element: Object, count: Number): String {
+  const hole = element == TheHole ? str : str;
+  const len = str.length_intptr;
+  const asPrimitive: PrimitiveHeapObject = str;
+  const strMap = str.map;
+  const asNull: PrimitiveHeapObject = n;
+  const ts = b.to_string;
+  const recMap = rec.map;
+  const kind = m.elements_kind;
+  const joined = ArrayPrototypeJoinImpl(array, count, str);
+  return CycleProtectedArrayJoin<JSReceiver>(false, rec, count, str, Undefined, Undefined);
+}
+"#;
+    let result = compile_with_check(
+        &[
+            SourceFileInput {
+                uri: "memory://objects.tq".into(),
+                text: objects.trim().into(),
+            },
+            SourceFileInput {
+                uri: "memory://array-join.tq".into(),
+                text: join.trim().into(),
+            },
+        ],
+        Some(&["memory://array-join.tq".into()]),
+    );
+    let join_file = result
+        .files
+        .iter()
+        .find(|file| file.uri == "memory://array-join.tq")
+        .expect("join file");
+    let forbidden = [
+        "Cannot resolve 'TheHole'",
+        "Type 'String' has no field 'length_intptr'",
+        "Type 'String' is not assignable to 'PrimitiveHeapObject'",
+        "Type 'String' has no field 'map'",
+        "Type 'Null' is not assignable to 'PrimitiveHeapObject'",
+        "Type 'Boolean' has no field 'to_string'",
+        "Type 'JSReceiver' has no field 'map'",
+        "Type 'Map' has no field 'elements_kind'",
+        "Cannot find matching callable 'ArrayPrototypeJoinImpl'",
+        "Cannot find matching callable 'CycleProtectedArrayJoin'",
+    ];
+    for message in forbidden {
+        assert!(
+            !join_file
+                .diagnostics
+                .iter()
+                .any(|item| item.message == message),
+            "unexpected {message} in {:?}",
+            join_file.diagnostics
+        );
+    }
+    let edited = format!("{}\n", join.trim());
+    let incremental = compile_incremental("memory://array-join.tq", &edited).expect("session");
+    assert_eq!(incremental.parse_count, 1);
+    assert_eq!(incremental.files.len(), 1);
+    let join_file = &incremental.files[0];
+    for message in forbidden {
+        assert!(
+            !join_file
+                .diagnostics
+                .iter()
+                .any(|item| item.message == message),
+            "incremental unexpected {message} in {:?}",
+            join_file.diagnostics
+        );
+    }
+}
+
+#[test]
+fn unknown_type_name_is_a_build_error() {
+    let source = r#"
+macro Main(value: InventedHeapType): InventedHeapType {
+  return value;
+}
+"#;
+    let file = compile_one("memory://unknown-type.tq", source.trim());
+    assert!(
+        file.diagnostics
+            .iter()
+            .any(|item| item.message == "Cannot resolve type 'InventedHeapType'"),
+        "{:?}",
+        file.diagnostics
+    );
 }

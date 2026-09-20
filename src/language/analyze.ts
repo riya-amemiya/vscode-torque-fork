@@ -87,6 +87,7 @@ export type DocumentAnalysis = {
   diagnostics: TorqueDiagnostic[];
   includes: IncludeReference[];
   definitions: DefinitionMapping[];
+  builtinTypes: string[];
   lines: LineTable;
 };
 
@@ -136,14 +137,17 @@ export function analysisFromCompiler(
       toStart: item.toStart,
       toEnd: item.toEnd,
     })),
+    builtinTypes: file.builtinTypes ?? [],
     lines: createLineTable(text),
   };
 }
 
 export function analyzeDocuments(
   files: Array<{ uri: string; text: string }>,
+  checkUris?: readonly string[],
+  incremental = false,
 ): Map<string, DocumentAnalysis> {
-  const compiled = compileSources(files);
+  const compiled = compileSources(files, checkUris, incremental);
   const analyses = new Map<string, DocumentAnalysis>();
   for (const file of compiled) {
     const source = files.find((item) => item.uri === file.uri)?.text ?? "";
@@ -157,12 +161,43 @@ export function analyzeDocument(text: string, uri = "memory://document.tq"): Doc
   return files.get(uri) ?? analysisFromCompiler(uri, text, emptyCompilerFile(uri));
 }
 
+const TYPE_SYMBOL_KINDS: ReadonlySet<TorqueSymbolKind> = new Set([
+  "type",
+  "class",
+  "struct",
+  "enum",
+  "shape",
+]);
+
 function unresolvedName(message: string): string | undefined {
   const prefix = "Cannot resolve '";
   if (!message.startsWith(prefix) || !message.endsWith("'")) {
     return undefined;
   }
   return message.slice(prefix.length, message.length - 1);
+}
+
+function unresolvedTypeName(message: string): string | undefined {
+  const prefix = "Cannot resolve type '";
+  if (!message.startsWith(prefix) || !message.endsWith("'")) {
+    return undefined;
+  }
+  return message.slice(prefix.length, message.length - 1);
+}
+
+function matchingCallableName(message: string): string | undefined {
+  const prefix = "Cannot find matching callable '";
+  if (!message.startsWith(prefix) || !message.endsWith("'")) {
+    return undefined;
+  }
+  return message.slice(prefix.length, message.length - 1);
+}
+
+function isSharedConst(symbol: TorqueSymbol): boolean {
+  if (symbol.containerName !== undefined) {
+    return true;
+  }
+  return symbol.name.startsWith("k") && symbol.name.length > 1;
 }
 
 function qualifierAt(analysis: DocumentAnalysis, start: number): string | undefined {
@@ -186,26 +221,55 @@ export function dropResolvedElsewhere(
   analysis: DocumentAnalysis,
   workspace: readonly DocumentAnalysis[],
 ): DocumentAnalysis {
-  const known = new Set<string>();
+  const knownQualified = new Set<string>();
+  const knownTypes = new Set<string>();
+  const knownValues = new Set<string>();
+  const knownCallables = new Set<string>();
   for (const document of workspace) {
     for (const symbol of document.symbols) {
       if (symbol.containerName !== undefined) {
-        known.add(`${symbol.containerName}::${symbol.name}`);
+        knownQualified.add(`${symbol.containerName}::${symbol.name}`);
+      }
+      if (TYPE_SYMBOL_KINDS.has(symbol.kind)) {
+        knownTypes.add(symbol.name);
+      }
+      if (
+        symbol.kind === "macro" ||
+        symbol.kind === "builtin" ||
+        symbol.kind === "runtime" ||
+        symbol.kind === "intrinsic"
+      ) {
+        knownCallables.add(symbol.name);
+        knownValues.add(symbol.name);
+      }
+      if (symbol.kind === "namespace") {
+        knownValues.add(symbol.name);
+      }
+      if (symbol.kind === "const" && isSharedConst(symbol)) {
+        knownValues.add(symbol.name);
       }
     }
   }
   return {
     ...analysis,
     diagnostics: analysis.diagnostics.filter((item) => {
+      const typeName = unresolvedTypeName(item.message);
+      if (typeName !== undefined) {
+        return !knownTypes.has(typeName);
+      }
+      const callable = matchingCallableName(item.message);
+      if (callable !== undefined) {
+        return !knownCallables.has(callable);
+      }
       const name = unresolvedName(item.message);
       if (name === undefined) {
         return true;
       }
       const qualifier = qualifierAt(analysis, item.start);
-      if (qualifier === undefined) {
-        return true;
+      if (qualifier !== undefined) {
+        return !knownQualified.has(`${qualifier}::${name}`);
       }
-      return !known.has(`${qualifier}::${name}`);
+      return !knownValues.has(name);
     }),
   };
 }
@@ -217,6 +281,7 @@ function emptyCompilerFile(uri: string): CompilerFile {
     symbols: [],
     includes: [],
     definitions: [],
+    builtinTypes: [],
   };
 }
 

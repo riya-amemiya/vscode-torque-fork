@@ -54,6 +54,8 @@ describe("semanticTokensFor", () => {
 
   test("colors generic parameters and bound types in the V8 extends form", () => {
     const join = `
+extern enum ElementsKind extends int32 { PACKED_SMI_ELEMENTS }
+extern class JSTypedArray extends JSReceiver {}
 LoadJoinTypedElement<T : type extends ElementsKind>(
     context: Context, receiver: JSReceiver, k: uintptr): JSAny {
   const typedArray: JSTypedArray = UnsafeCast<JSTypedArray>(receiver);
@@ -68,14 +70,32 @@ LoadJoinTypedElement<T : type extends ElementsKind>(
 
     const elementsKind = spansNamed(spans, analysis, "ElementsKind");
     expect(elementsKind.length).toBeGreaterThan(0);
-    expect(elementsKind.every((span) => span.type === "type")).toBe(true);
+    expect(elementsKind.every((span) => span.type === "enum" || span.type === "type")).toBe(true);
 
     const jsTypedArray = spansNamed(spans, analysis, "JSTypedArray");
     expect(jsTypedArray.length).toBeGreaterThan(0);
-    expect(jsTypedArray.every((span) => span.type === "type")).toBe(true);
+    expect(jsTypedArray.every((span) => span.type === "class" || span.type === "type")).toBe(true);
 
     expect(spansNamed(spans, analysis, "type").length).toBe(0);
     expect(spansNamed(spans, analysis, "extends").length).toBe(0);
+  });
+
+  test("does not color an unresolved type name as a type", () => {
+    const invented = `
+macro Main(value: InventedHeapType): InventedHeapType {
+  return Cast<InventedHeapType>(value);
+}
+`.trim();
+    const analysis = analyzeDocument(invented);
+    expect(
+      analysis.diagnostics.some(
+        (item) => item.message === "Cannot resolve type 'InventedHeapType'",
+      ),
+    ).toBe(true);
+    const spans = semanticTokensFor(analysis);
+    expect(
+      spansNamed(spans, analysis, "InventedHeapType").some((span) => span.type === "type"),
+    ).toBe(false);
   });
 
   test("records let and label symbols from the compiler", () => {

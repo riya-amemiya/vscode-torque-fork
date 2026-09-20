@@ -79,6 +79,7 @@ pub struct TypeData {
     pub span: Span,
 }
 
+#[derive(Clone, Debug)]
 pub struct TypeStore {
     types: Vec<TypeData>,
 }
@@ -140,6 +141,13 @@ impl TypeStore {
 
     pub fn intern_applied(&mut self, name: String, args: Vec<TypeId>, span: Span) -> TypeId {
         self.intern(TypeKind::Applied { name, args }, span)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (TypeId, &TypeData)> {
+        self.types
+            .iter()
+            .enumerate()
+            .map(|(index, data)| (TypeId(index as u32), data))
     }
 
     pub fn intern_generic_param(&mut self, name: String, span: Span) -> TypeId {

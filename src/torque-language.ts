@@ -232,6 +232,18 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     semanticChange.fire();
   };
 
+  const pendingRefresh = { timer: undefined as ReturnType<typeof setTimeout> | undefined };
+
+  const scheduleRefresh = (document: TextDocument): void => {
+    if (pendingRefresh.timer !== undefined) {
+      clearTimeout(pendingRefresh.timer);
+    }
+    pendingRefresh.timer = setTimeout(() => {
+      pendingRefresh.timer = undefined;
+      refreshDocument(document);
+    }, 50);
+  };
+
   const ingestOpen = (document: TextDocument): void => {
     if (document.languageId !== "torque") {
       return;
@@ -273,7 +285,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
       if (event.contentChanges.length === 0) {
         return;
       }
-      refreshDocument(event.document);
+      scheduleRefresh(event.document);
     }),
     vsWorkspace.onDidSaveTextDocument((document) => {
       refreshDocument(document);

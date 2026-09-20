@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveDefinition } from "./analyze";
-import { compileSources, lastCompileParseCount } from "./wasm";
+import { compileSources, lastCompileInputFileCount, lastCompileParseCount } from "./wasm";
 import { TorqueWorkspace } from "./workspace";
 
 describe("TorqueWorkspace", () => {
@@ -131,6 +131,124 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
     expect(
       analysis.diagnostics.some((item) => item.message === "Cannot resolve 'PACKED_SMI_ELEMENTS'"),
     ).toBe(false);
+  });
+
+  test("refresh does not flood errors for a sibling constexpr used after a one-character edit", () => {
+    const store = new TorqueWorkspace();
+    store.load(
+      "memory://base.tq",
+      "const kMaxNewSpaceFixedArrayElements: constexpr int31 generates 'FixedArray::kMaxRegularLength';",
+    );
+    store.load(
+      "memory://array-join.tq",
+      "const kMaxBufferChunkSize: constexpr int31 = kMaxNewSpaceFixedArrayElements;",
+    );
+    store.rebuild();
+    store.load(
+      "memory://array-join.tq",
+      "const kMaxBufferChunkSize: constexpr int31 = kMaxNewSpaceFixedArrayElements",
+    );
+    const analysis = store.refresh("memory://array-join.tq");
+    expect(
+      analysis.diagnostics.some(
+        (item) => item.message === "Cannot resolve 'kMaxNewSpaceFixedArrayElements'",
+      ),
+    ).toBe(false);
+    expect(analysis.diagnostics.some((item) => item.message === "Expected ';'")).toBe(true);
+  });
+
+  test("refresh does not emit array-join false positives when siblings declare the names", () => {
+    const store = new TorqueWorkspace();
+    const objects = `
+extern class HeapObject {
+  const map: Map;
+}
+extern class PrimitiveHeapObject extends HeapObject {}
+extern class Name extends PrimitiveHeapObject {}
+extern class String extends Name {}
+extern operator '.length_intptr' macro LoadStringLengthAsWord(String): intptr;
+extern class Map {
+  elements_kind: ElementsKind;
+}
+extern enum ElementsKind { PACKED_SMI_ELEMENTS }
+extern class JSReceiver extends HeapObject {}
+extern class Boolean extends PrimitiveHeapObject {
+  to_string: String;
+}
+extern class Null extends PrimitiveHeapObject {}
+type TheHole;
+extern macro TheHoleConstant(): TheHole;
+const TheHole: TheHole = TheHoleConstant();
+`.trim();
+    const join = `
+macro ArrayPrototypeJoinImpl(array: JSReceiver, len: Number, separator: String): String {
+  return separator;
+}
+macro CycleProtectedArrayJoin<T: type>(
+    toLocale: bool, array: T, len: Number, separator: String, locales: JSAny, options: JSAny): String {
+  return separator;
+}
+macro UseJoinNames(
+    array: JSReceiver, str: String, m: Map, b: Boolean, rec: JSReceiver, n: Null,
+    element: Object, count: Number): String {
+  const hole = element == TheHole ? str : str;
+  const len = str.length_intptr;
+  const asPrimitive: PrimitiveHeapObject = str;
+  const strMap = str.map;
+  const asNull: PrimitiveHeapObject = n;
+  const ts = b.to_string;
+  const recMap = rec.map;
+  const kind = m.elements_kind;
+  const joined = ArrayPrototypeJoinImpl(array, count, str);
+  return CycleProtectedArrayJoin<JSReceiver>(false, rec, count, str, Undefined, Undefined);
+}
+`.trim();
+    store.load("memory://objects.tq", objects);
+    store.load("memory://array-join.tq", join);
+    store.rebuild();
+    const kept = store.get("memory://objects.tq");
+    store.load("memory://array-join.tq", `${join}\n`);
+    const analysis = store.refresh("memory://array-join.tq");
+    expect(store.get("memory://objects.tq")).toBe(kept);
+    expect(lastCompileParseCount()).toBe(1);
+    expect(lastCompileInputFileCount()).toBe(1);
+    const forbidden = [
+      "Cannot resolve 'TheHole'",
+      "Type 'String' has no field 'length_intptr'",
+      "Type 'String' is not assignable to 'PrimitiveHeapObject'",
+      "Type 'String' has no field 'map'",
+      "Type 'Null' is not assignable to 'PrimitiveHeapObject'",
+      "Type 'Boolean' has no field 'to_string'",
+      "Type 'JSReceiver' has no field 'map'",
+      "Type 'Map' has no field 'elements_kind'",
+      "Cannot find matching callable 'ArrayPrototypeJoinImpl'",
+      "Cannot find matching callable 'CycleProtectedArrayJoin'",
+    ];
+    const messages = analysis.diagnostics.map((item) => item.message);
+    expect(forbidden.filter((item) => messages.includes(item))).toEqual([]);
+  });
+
+  test("refresh still reports a misspelled sibling constexpr", () => {
+    const store = new TorqueWorkspace();
+    store.load(
+      "memory://base.tq",
+      "const kMaxNewSpaceFixedArrayElements: constexpr int31 generates 'FixedArray::kMaxRegularLength';",
+    );
+    store.load(
+      "memory://array-join.tq",
+      "const kMaxBufferChunkSize: constexpr int31 = kMaxNewSpaceFixedArrayElement;",
+    );
+    store.rebuild();
+    store.load(
+      "memory://array-join.tq",
+      "const kMaxBufferChunkSize: constexpr int31 = kMaxNewSpaceFixedArrayElement;\n",
+    );
+    const analysis = store.refresh("memory://array-join.tq");
+    expect(
+      analysis.diagnostics.some(
+        (item) => item.message === "Cannot resolve 'kMaxNewSpaceFixedArrayElement'",
+      ),
+    ).toBe(true);
   });
 });
 

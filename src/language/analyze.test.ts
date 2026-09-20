@@ -264,6 +264,20 @@ macro Main(receiver: JSAny): JSReceiver {
     expect(resolved.every((symbol) => symbol.name !== "T")).toBe(true);
   });
 
+  test("reports an unresolved type name as Cannot resolve type", () => {
+    const source = `
+macro Main(value: InventedHeapType): InventedHeapType {
+  return value;
+}
+`.trim();
+    const analysis = analyzeDocument(source);
+    expect(
+      analysis.diagnostics.some(
+        (item) => item.message === "Cannot resolve type 'InventedHeapType'",
+      ),
+    ).toBe(true);
+  });
+
   test("does not keep Cannot resolve for enum entries declared in another file", () => {
     const source = `
 macro FastFilterSpeciesCreate(receiver: JSReceiver): JSReceiver {

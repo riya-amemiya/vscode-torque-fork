@@ -159,42 +159,6 @@ export const TORQUE_BUILTINS = [
   },
 ] as const;
 
-export const TORQUE_COMMON_TYPES = [
-  "Boolean",
-  "Callable",
-  "Context",
-  "ElementsKind",
-  "FixedArray",
-  "HeapNumber",
-  "HeapObject",
-  "JSAny",
-  "JSObject",
-  "JSReceiver",
-  "JSTypedArray",
-  "Map",
-  "Name",
-  "NativeContext",
-  "Never",
-  "Number",
-  "Numeric",
-  "Object",
-  "Oddball",
-  "Smi",
-  "String",
-  "Undefined",
-  "bint",
-  "bool",
-  "float64",
-  "float64_or_hole",
-  "int31",
-  "int32",
-  "intptr",
-  "never",
-  "uint32",
-  "uintptr",
-  "void",
-] as const;
-
 export const TORQUE_SNIPPETS = [
   {
     label: "macro",
