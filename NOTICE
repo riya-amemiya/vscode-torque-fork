@@ -5,6 +5,18 @@ This product includes software from vscode-torque
 (https://github.com/v8/vscode-torque):
 Copyright 2019 The VSCode V8 Torque Authors
 
+The Torque formatter is a port of tools/torque/format-torque.py from the V8
+project (https://github.com/v8/v8):
+Copyright 2014 the V8 project authors. All rights reserved.
+Use of that source code is governed by a BSD-style license that can be found
+in the V8 LICENSE file.
+
+Formatting is performed by clang-format, built to WebAssembly and distributed
+via @wasm-fmt/clang-format (https://github.com/wasm-fmt/clang-format),
+Copyright (c) 2023 wasm-fmt, MIT License.
+clang-format itself is part of LLVM, licensed under the Apache License,
+Version 2.0 with LLVM Exceptions.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
