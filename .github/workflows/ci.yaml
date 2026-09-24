@@ -52,3 +52,9 @@ jobs:
             echo "torque_compiler.wasm must be packaged in the VSIX" >&2
             exit 1
           fi
+      - name: VSIX must contain the bundled clang-format
+        run: |
+          if ! unzip -Z1 ./*.vsix | grep -E 'clang-format\.wasm$'; then
+            echo "clang-format.wasm must be packaged in the VSIX" >&2
+            exit 1
+          fi

@@ -2,7 +2,7 @@
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
   "version": "1.5.0",
-  "description": "Syntax highlighting, go-to-definition, completions, and a WASM Torque compiler for V8 Torque",
+  "description": "Syntax highlighting, formatting, go-to-definition, completions, and a WASM Torque compiler for V8 Torque",
   "categories": [
     "Programming Languages"
   ],
@@ -19,7 +19,7 @@
   "main": "./dist/extension.js",
   "scripts": {
     "build:wasm": "cargo build --release --target wasm32-unknown-unknown -p torque-compiler && bun scripts/copy-wasm.ts",
-    "bundle": "rolldown -c",
+    "bundle": "rolldown -c && bun scripts/copy-formatter-wasm.ts",
     "compile": "bun run build:wasm && bun run bundle",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -29,9 +29,10 @@
     "test:compiler": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "bun run build:wasm && rolldown -c --minify",
-    "watch": "rolldown -c --watch"
+    "watch": "bun scripts/copy-formatter-wasm.ts && rolldown -c --watch"
   },
   "dependencies": {
+    "@wasm-fmt/clang-format": "23.1.1",
     "vscode-languageclient": "10.1.1"
   },
   "devDependencies": {
@@ -146,6 +147,7 @@
     ],
     "configurationDefaults": {
       "[torque]": {
+        "editor.defaultFormatter": "riya-amemiya.vscode-torque-fork",
         "editor.semanticHighlighting.enabled": true
       },
       "editor.semanticTokenColorCustomizations": {

@@ -5,6 +5,7 @@
     "": {
       "name": "vscode-torque",
       "dependencies": {
+        "@wasm-fmt/clang-format": "23.1.1",
         "vscode-languageclient": "10.1.1",
       },
       "devDependencies": {
@@ -261,6 +262,8 @@
     "@vscode/vsce-sign-win32-arm64": ["@vscode/vsce-sign-win32-arm64@2.0.6", "", { "os": "win32", "cpu": "arm64" }, "sha512-ivM/MiGIY0PJNZBoGtlRBM/xDpwbdlCWomUWuLmIxbi1Cxe/1nooYrEQoaHD8ojVRgzdQEUzMsRbyF5cJJgYOg=="],
 
     "@vscode/vsce-sign-win32-x64": ["@vscode/vsce-sign-win32-x64@2.0.6", "", { "os": "win32", "cpu": "x64" }, "sha512-mgth9Kvze+u8CruYMmhHw6Zgy3GRX2S+Ed5oSokDEK5vPEwGGKnmuXua9tmFhomeAnhgJnL4DCna3TiNuGrBTQ=="],
+
+    "@wasm-fmt/clang-format": ["@wasm-fmt/clang-format@23.1.1", "", { "bin": { "clang-format": "clang-format-cli.cjs", "git-clang-format": "git-clang-format", "clang-format-diff": "clang-format-diff.py" } }, "sha512-SPA6H8DI/MOJAr0CfpbFBoqI5sfrimu3SlovuAAy36mq9vs9TOkS48lpUsNaPLeZzeQVEGe+pfbJHXKxiroP/g=="],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 

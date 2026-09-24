@@ -28,6 +28,7 @@ import {
   SemanticTokensBuilder,
   SemanticTokensLegend,
   SnippetString,
+  TextEdit,
   SymbolKind,
   Uri,
   languages,
@@ -46,6 +47,7 @@ import {
   type TorqueSymbolKind,
 } from "./language/analyze";
 import { completionsFor, type CompletionKind } from "./language/complete";
+import { formatTorque } from "./language/format-torque";
 import { hoverFor } from "./language/hover";
 import { positionToOffset } from "./language/positions";
 import {
@@ -350,6 +352,17 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
         markdown.appendCodeblock(hover.title, "torque");
         markdown.appendMarkdown(hover.body);
         return new Hover(markdown);
+      },
+    }),
+    languages.registerDocumentFormattingEditProvider(SELECTOR, {
+      provideDocumentFormattingEdits(document) {
+        const formatted = formatTorque(document.getText());
+        if (formatted === document.getText()) {
+          return [];
+        }
+        const start = document.positionAt(0);
+        const end = document.positionAt(document.getText().length);
+        return [TextEdit.replace(new Range(start, end), formatted)];
       },
     }),
     languages.registerDocumentSymbolProvider(SELECTOR, {
