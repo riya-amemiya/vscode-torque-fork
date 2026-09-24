@@ -11,8 +11,8 @@ Security updates are issued for the latest published release of this fork
 
 | Version | Supported |
 | ------- | --------- |
-| 1.2.x   | Yes       |
-| < 1.2   | No        |
+| 1.6.x   | Yes       |
+| < 1.6   | No        |
 
 ## Reporting a vulnerability
 
