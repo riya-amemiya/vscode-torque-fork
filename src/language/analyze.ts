@@ -62,7 +62,7 @@ export type TorqueDiagnostic = {
   message: string;
   start: number;
   end: number;
-  severity: "error";
+  severity: "error" | "warning";
 };
 
 export type IncludeReference = {
@@ -123,7 +123,7 @@ export function analysisFromCompiler(
       message: item.message,
       start: item.start,
       end: item.end,
-      severity: "error",
+      severity: item.severity,
     })),
     includes: file.includes.map((item) => ({
       path: item.path,

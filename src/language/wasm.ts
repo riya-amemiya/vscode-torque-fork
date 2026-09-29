@@ -19,7 +19,7 @@ export type CompilerDiagnostic = {
   message: string;
   start: number;
   end: number;
-  severity: "error";
+  severity: "error" | "warning";
 };
 
 export type CompilerSymbol = {

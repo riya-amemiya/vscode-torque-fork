@@ -94,7 +94,10 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             while index < bytes.len() {
                 let current = bytes[index];
                 if current == b'\\' {
-                    index = (index + 2).min(bytes.len());
+                    index += 1;
+                    if let Some(escaped) = text[index..].chars().next() {
+                        index += escaped.len_utf8();
+                    }
                     continue;
                 }
                 if current == quote {
@@ -284,7 +287,7 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             continue;
         }
 
-        index += 1;
+        index += text[start..].chars().next().map_or(1, char::len_utf8);
         let punct = &text[start..index];
         let allowed = "{}[]()<>:;,.?=+-*/%|&!~^".contains(punct) || punct == "\\";
         tokens.push(if allowed {

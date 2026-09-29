@@ -42,6 +42,12 @@ struct CachedParse {
 thread_local! {
     static PARSE_CACHE: RefCell<HashMap<String, CachedParse>> = RefCell::new(HashMap::new());
     static PARSE_COUNT: Cell<u32> = const { Cell::new(0) };
+    static SOURCE_SET: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn is_in_source_set(uris: &[String], path: &str) -> bool {
+    let suffix = format!("/{path}");
+    uris.iter().any(|uri| uri == path || uri.ends_with(&suffix))
 }
 
 fn parse_cached(uri: String, text: String, file: u32) -> ParseOutput {
@@ -76,13 +82,16 @@ pub fn compile_with_check(
     check_uris: Option<&[String]>,
 ) -> CompileResult {
     PARSE_COUNT.with(|count| count.set(0));
+    let uris: Vec<String> = files.iter().map(|file| file.uri.clone()).collect();
     let mut parsed = Vec::new();
     let mut parse_diagnostics = Vec::new();
     for (index, file) in files.iter().enumerate() {
         let output = parse_cached(file.uri.clone(), file.text.clone(), index as u32);
-        parse_diagnostics.extend(output.diagnostics);
+        parse_diagnostics
+            .extend(output.diagnostics_with_imports(|path| is_in_source_set(&uris, path)));
         parsed.push(output.file);
     }
+    SOURCE_SET.with(|set| *set.borrow_mut() = uris);
     CompileResult {
         files: check_files_select(&parsed, parse_diagnostics, check_uris),
         parse_count: PARSE_COUNT.with(|count| count.get()),
@@ -93,7 +102,9 @@ pub fn compile_incremental(uri: &str, text: &str) -> Option<CompileResult> {
     let index = env_uri_index(uri)?;
     PARSE_COUNT.with(|count| count.set(0));
     let output = parse_cached(uri.to_string(), text.to_string(), index);
-    let analysis = check_incremental(output.file, output.diagnostics)?;
+    let diagnostics = SOURCE_SET
+        .with(|set| output.diagnostics_with_imports(|path| is_in_source_set(&set.borrow(), path)));
+    let analysis = check_incremental(output.file, diagnostics)?;
     Some(CompileResult {
         files: vec![analysis],
         parse_count: PARSE_COUNT.with(|count| count.get()),

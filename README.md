@@ -17,7 +17,7 @@ Opening a `.tq` file enables:
 
 - Go to definition for macros, builtins, types, classes, structs, fields, and locals
 - Inline completions and snippets for Torque keywords, annotations, and builtins such as `Cast` and `typeswitch`
-- Syntax error markers for unmatched delimiters, unterminated strings, and malformed declarations
+- Syntax errors and lint warnings reported with the same messages and positions as V8's Torque parser
 - Hover documentation and the document outline
 - Document formatting with V8's `format-torque.py` rules, using a bundled
   clang-format. Format Document works without a V8 checkout or a system

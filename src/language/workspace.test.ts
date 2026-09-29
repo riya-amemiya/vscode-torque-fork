@@ -77,7 +77,7 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
     expect(
       store
         .get("memory://parse-reuse-edit.tq")
-        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+        ?.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
     ).toBe(false);
 
     store.rebuild();
@@ -85,12 +85,12 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
     expect(
       store
         .get("memory://parse-reuse-edit.tq")
-        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+        ?.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
     ).toBe(true);
     expect(
       store
         .get("memory://parse-reuse-keep.tq")
-        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+        ?.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
     ).toBe(false);
   });
 
@@ -104,11 +104,13 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
     const edited = store.refresh("memory://refresh-edit.tq");
     expect(lastCompileParseCount()).toBe(1);
     expect(store.get("memory://refresh-keep.tq")).toBe(kept);
-    expect(edited.diagnostics.some((item) => item.message.includes("Unclosed"))).toBe(true);
+    expect(
+      edited.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
+    ).toBe(true);
     expect(
       store
         .get("memory://refresh-keep.tq")
-        ?.diagnostics.some((item) => item.message.includes("Unclosed")),
+        ?.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
     ).toBe(false);
     const count = lastCompileParseCount();
     expect(store.refresh("memory://refresh-edit.tq")).toBe(edited);
@@ -154,7 +156,9 @@ macro Flatten(w: FastJSArrayForReadWitness): void labels CastError {
         (item) => item.message === "Cannot resolve 'kMaxNewSpaceFixedArrayElements'",
       ),
     ).toBe(false);
-    expect(analysis.diagnostics.some((item) => item.message === "Expected ';'")).toBe(true);
+    expect(
+      analysis.diagnostics.some((item) => item.message === "Parser Error: unexpected end of input"),
+    ).toBe(true);
   });
 
   test("refresh does not emit array-join false positives when siblings declare the names", () => {

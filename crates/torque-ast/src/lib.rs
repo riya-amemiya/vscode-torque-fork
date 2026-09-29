@@ -78,6 +78,7 @@ pub struct ParamList {
     pub named: Vec<NameAndType>,
     pub types_only: Vec<TypeExpr>,
     pub rest: Option<Ident>,
+    pub has_varargs: bool,
 }
 
 #[derive(Clone, Debug)]
