@@ -79,6 +79,7 @@ struct Checker {
     string_lit_ty: TypeId,
     current_return: TypeId,
     report_unknown_types: bool,
+    stale_types: HashSet<TypeId>,
 }
 
 const PRELUDE_TYPES: &[&str] = &[
@@ -145,6 +146,7 @@ impl Checker {
             string_lit_ty,
             current_return: void_ty,
             report_unknown_types: true,
+            stale_types: HashSet::new(),
         }
     }
 
@@ -244,8 +246,13 @@ impl Checker {
     }
 
     fn intern_named(&mut self, name: &str, kind: TypeKind, span: Span) -> TypeId {
-        if let Some(id) = self.types_by_name.get(name) {
-            return *id;
+        if let Some(id) = self.types_by_name.get(name).copied() {
+            if self.stale_types.remove(&id) {
+                let data = self.types.get_mut(id);
+                data.kind = kind;
+                data.span = span;
+            }
+            return id;
         }
         let id = self.types.intern(kind, span);
         self.types_by_name.insert(name.to_string(), id);
@@ -497,6 +504,9 @@ impl Checker {
         let name = self.types.base_name(base);
         let key = format!("constexpr {name}");
         if let Some(id) = self.types_by_name.get(&key).copied() {
+            if self.stale_types.remove(&id) {
+                self.types.get_mut(id).span = span;
+            }
             return id;
         }
         let id = self.types.intern(
@@ -2980,15 +2990,27 @@ impl Checker {
         self.definitions.retain(|item| item.from_file != file);
         self.symbols.retain(|(item_file, _)| *item_file != file);
         self.includes.retain(|(item_file, _)| *item_file != file);
-        let drop_types: HashSet<TypeId> = self
+        self.stale_types = self
             .types
             .iter()
             .filter(|(_, data)| data.span.file == file && !Self::is_dummy_span(data.span))
             .map(|(id, _)| id)
             .collect();
-        self.types_by_name.retain(|_, id| !drop_types.contains(id));
         self.bindings
             .retain(|binding| binding.span.file != file || Self::is_dummy_span(binding.span));
+        self.rebuild_callables();
+        while self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.values.retain(|_, binding| {
+                binding.span.file != file || Self::is_dummy_span(binding.span)
+            });
+        }
+        self.current_return = self.void_ty;
+    }
+
+    fn rebuild_callables(&mut self) {
         self.callables.clear();
         for (index, binding) in self.bindings.iter().enumerate() {
             self.callables
@@ -2999,15 +3021,31 @@ impl Checker {
                 self.callables.entry(op.clone()).or_default().push(index);
             }
         }
-        while self.scopes.len() > 1 {
-            self.scopes.pop();
-        }
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.values.retain(|_, binding| {
-                binding.span.file != file || Self::is_dummy_span(binding.span)
-            });
-        }
-        self.current_return = self.void_ty;
+    }
+
+    fn restore_binding_order(&mut self) {
+        self.bindings
+            .sort_by_key(|binding| (!Self::is_dummy_span(binding.span), binding.span.file));
+        self.rebuild_callables();
+    }
+
+    fn drop_undeclared_stale_types(&mut self) {
+        let undeclared: HashSet<TypeId> = self
+            .stale_types
+            .iter()
+            .copied()
+            .filter(|id| {
+                !matches!(
+                    self.types.get(*id).kind,
+                    TypeKind::Abstract {
+                        is_constexpr: true,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        self.types_by_name.retain(|_, id| !undeclared.contains(id));
+        self.stale_types.retain(|id| !undeclared.contains(id));
     }
 
     fn analysis_of(&self, file: &ParsedFile) -> FileAnalysis {
@@ -3154,8 +3192,11 @@ pub fn check_incremental(
         }
         checker.strip_file(file.file);
         checker.predeclare(&file.decls, "");
+        checker.drop_undeclared_stale_types();
         checker.bind_decls(&file.decls, "");
+        checker.restore_binding_order();
         checker.check_decls(&file.decls);
+        checker.stale_types.clear();
         checker.diagnostics.extend(parse_diagnostics);
         let mut analysis = checker.analysis_of(&file);
         analysis.diagnostics.sort_by_key(|diagnostic| {
