@@ -25,7 +25,6 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack
       - run: bun run build:wasm
-      - run: bun install --frozen-lockfile
       - run: bun run package
       - run: gh release create "${{ github.ref_name }}" ./*.vsix --generate-notes
         env:
