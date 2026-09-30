@@ -176,7 +176,7 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
         const diagnostic = new Diagnostic(
           vscodeRange(diagnosticRange(analysis, item)),
           item.message,
-          DiagnosticSeverity.Error,
+          item.severity === "warning" ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
         );
         diagnostic.source = "Torque Compiler";
         return diagnostic;

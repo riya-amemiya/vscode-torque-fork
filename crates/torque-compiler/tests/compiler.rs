@@ -72,11 +72,15 @@ fn extracts_namespaces_types_classes_fields_and_builtins() {
 
 #[test]
 fn detects_unmatched_braces() {
-    let file = compile_one("memory://broken.tq", "macro Broken(): void { if (true) {");
+    let source = "macro Broken(): void { if (true) {";
+    let file = compile_one("memory://broken.tq", source);
+    let end = source.len() as u32;
     assert!(
-        file.diagnostics
-            .iter()
-            .any(|item| item.message.contains("Unclosed")),
+        file.diagnostics.iter().any(|item| {
+            item.message == "Parser Error: unexpected end of input"
+                && item.start == end
+                && item.end == end
+        }),
         "{:?}",
         file.diagnostics
     );
@@ -86,9 +90,11 @@ fn detects_unmatched_braces() {
 fn detects_missing_macro_name() {
     let file = compile_one("memory://broken.tq", "macro (): void {}");
     assert!(
-        file.diagnostics
-            .iter()
-            .any(|item| item.message == "Expected macro name"),
+        file.diagnostics.iter().any(|item| {
+            item.message == "Parser Error: unexpected token \"(\""
+                && item.start == 6
+                && item.end == 7
+        }),
         "{:?}",
         file.diagnostics
     );
@@ -270,7 +276,7 @@ macro Main(x: Smi): Smi { return Helper(x); }
 #[test]
 fn jumps_from_operator_use_to_operator_macro() {
     let source = r#"
-extern operator '==' macro SmiEqual(x: Smi, y: Smi): bool;
+extern operator '==' macro SmiEqual(Smi, Smi): bool;
 macro Main(a: Smi): bool {
   return a == 1;
 }
@@ -367,9 +373,14 @@ fn messages(file: &torque_compiler::FileAnalysis) -> Vec<String> {
         .collect()
 }
 
+fn is_syntax_error(message: &str) -> bool {
+    message.starts_with("Parser Error:")
+        || message.starts_with("Lexer Error:")
+        || message.starts_with("Ambiguous grammer rules")
+}
+
 fn is_parser_garbage(message: &str) -> bool {
-    message == "Expected ';'"
-        || message == "Expected ')'"
+    is_syntax_error(message)
         || message == "Cannot resolve 'this'"
         || message == "Cannot resolve 'goto'"
         || message == "Cannot resolve 'continue'"
@@ -451,8 +462,7 @@ macro Flatten(implicit context: Context)(source: FastJSArrayWitness, length: Smi
 #[test]
 fn javascript_rest_arguments_and_js_implicit_context_are_bound() {
     let source = r#"
-extern macro ArraySpeciesCreate(context: NativeContext, o: JSReceiver, length: Number):
-    JSReceiver;
+extern macro ArraySpeciesCreate(NativeContext, JSReceiver, Number): JSReceiver;
 transitioning javascript builtin ArrayPrototypeFlat(
     js-implicit context: NativeContext, receiver: JSAny)(...arguments): JSAny {
   const o: JSReceiver = receiver;
@@ -568,13 +578,13 @@ extern enum ElementsKind { PACKED_SMI_ELEMENTS, PACKED_DOUBLE_ELEMENTS, PACKED_E
 extern enum MessageTemplate { kFlattenPastSafeLength }
 extern class FastJSArray extends JSObject { length: Number; map: Map; }
 extern class FastJSArrayForRead extends FastJSArray {}
-extern class FastJSArrayWitness {
+struct FastJSArrayWitness {
   macro Recheck(): void labels CastError {}
   macro Get(): FastJSArray { return this.array; }
   macro LoadElementNoHole(index: Smi): JSAny labels FoundHole { return index; }
   array: FastJSArray;
 }
-extern class GrowableFixedArray {
+struct GrowableFixedArray {
   macro Push(v: JSAny): void {}
   length: intptr;
   array: FixedArray;
@@ -583,9 +593,9 @@ extern class FixedArray extends HeapObject {}
 extern operator '.length_intptr' macro LoadLen(FixedArray): intptr;
 extern operator '.objects[]' macro LoadObj(FixedArray, Smi): Object;
 extern operator '.elements_kind' macro LoadKind(Map): ElementsKind;
-extern macro TrySmiAdd(x: Smi, y: Smi): Smi labels Overflow;
-extern macro TrySmiSub(x: Smi, y: Smi): Smi labels Overflow;
-extern macro ArraySpeciesCreate(context: NativeContext, o: JSReceiver, length: Number): JSReceiver;
+extern macro TrySmiAdd(Smi, Smi): Smi labels Overflow;
+extern macro TrySmiSub(Smi, Smi): Smi labels Overflow;
+extern macro ArraySpeciesCreate(NativeContext, JSReceiver, Number): JSReceiver;
 extern macro NewGrowableFixedArray(): GrowableFixedArray;
 const kMaxFlatFastStackEntries: intptr = 3072;
 struct FlatVector {
@@ -713,7 +723,7 @@ fn dump_real_base_has_no_user_reported_garbage() {
     let garbage: Vec<_> = messages
         .iter()
         .filter(|item| {
-            item.contains("Expected '>'")
+            is_syntax_error(item)
                 || item.contains("Cannot resolve 'return'")
                 || item.contains("Cannot resolve type 'V8_ENABLE")
                 || item.contains("Cannot resolve 'dcheck'")
@@ -911,7 +921,7 @@ fn native_context_slot_infers_t_from_enum_entry_slot_type() {
 type Slot<Container: type, T: type> extends intptr;
 extern class JSFunction extends JSReceiver {}
 extern enum ContextSlot extends intptr constexpr 'Context::Field' {
-  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>,
+  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>
 }
 macro NativeContextSlot<C: type, T: type>(
     implicit context: C)(index: Slot<NativeContext, T>): T {
@@ -935,8 +945,7 @@ macro Main(implicit context: Context)(): JSFunction {
 fn assert_clean(file: &torque_compiler::FileAnalysis) {
     let messages = messages(file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected '>'")
-            || item.contains("Expected '{'")
+        !messages.iter().any(|item| is_syntax_error(item)
             || item.contains("Cannot resolve 'return'")
             || item.contains("Cannot resolve type 'V8_ENABLE")
             || item.contains("Cannot resolve 'dcheck'")
@@ -974,7 +983,7 @@ macro Deep<T: type>(x: T): RawPtr<RawPtr<T>> {
     let file = compile_one("memory://nested-generic.tq", source.trim());
     let messages = messages(&file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected '>'")
+        !messages.iter().any(|item| is_syntax_error(item)
             || item.contains("MakeWeak")
             || item.contains("matching callable")),
         "{messages:?}"
@@ -1002,7 +1011,7 @@ macro EarlyOut(x: Number): void {
     assert!(
         !messages
             .iter()
-            .any(|item| item.contains("Cannot resolve 'return'") || item.contains("Expected ';'")),
+            .any(|item| item.contains("Cannot resolve 'return'") || is_syntax_error(item)),
         "{messages:?}"
     );
 }
@@ -1170,8 +1179,7 @@ FromConstexpr<intptr, constexpr IntegerLiteral>(i: constexpr IntegerLiteral):
     let file = compile_one("memory://specialize.tq", source.trim());
     let messages = messages(&file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected ':'")
-            || item.contains("Expected callable")
+        !messages.iter().any(|item| is_syntax_error(item)
             || item.contains("Cannot find matching callable 'Cast'")
             || item.contains("Cannot resolve type")),
         "{messages:?}"
@@ -1245,7 +1253,7 @@ extern class ScopeInfo extends HeapObject {
   const module_variable_count?
       [flags == 1]: Smi;
   inferred_function_name?[flags == 2]: String|Undefined;
-  outer_scope_info?: ScopeInfo;
+  outer_scope_info?[flags == 3]: ScopeInfo;
 }
 macro Read(info: ScopeInfo): Smi {
   return info.flags;
@@ -1254,9 +1262,9 @@ macro Read(info: ScopeInfo): Smi {
     let file = compile_one("memory://optional-fields.tq", source.trim());
     let messages = messages(&file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected ':'")
-            || item.contains("Expected '>'")
-            || item.contains("Cannot resolve type")),
+        !messages
+            .iter()
+            .any(|item| is_syntax_error(item) || item.contains("Cannot resolve type")),
         "{messages:?}"
     );
 }
@@ -1270,15 +1278,15 @@ Cast<JSAny|TheHole>(o: Object): JSAny|TheHole labels CastError {
   return %RawDownCast<JSAny|TheHole>(o);
 }
 macro Main(o: Object): JSAny|TheHole labels CastError {
-  return Cast<JSAny|TheHole>(o) otherwise CastError;
+  return Cast<(JSAny | TheHole)>(o) otherwise CastError;
 }
 "#;
     let file = compile_one("memory://union-specialization.tq", source.trim());
     let messages = messages(&file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected '>'")
-            || item.contains("Cannot resolve type")
-            || item.contains("Expected callable")),
+        !messages
+            .iter()
+            .any(|item| is_syntax_error(item) || item.contains("Cannot resolve type")),
         "{messages:?}"
     );
 }
@@ -1388,7 +1396,7 @@ fn deref_of_native_context_slot_is_the_slot_type() {
     let source = r#"
 type Slot<Container: type, T: type> extends intptr;
 extern enum ContextSlot extends intptr {
-  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>,
+  PROMISE_FUNCTION_INDEX: Slot<NativeContext, JSFunction>
 }
 macro NativeContextSlot<C: type, T: type>(
     implicit context: C)(index: Slot<NativeContext, T>):&T {
@@ -1482,7 +1490,7 @@ macro Status(p: JSPromise): uint32 {
 fn assert_no_frontend_noise(file: &torque_compiler::FileAnalysis) {
     let messages = messages(file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected '>'")
+        !messages.iter().any(|item| is_syntax_error(item)
             || item.contains("has no field")
             || item.contains("Cannot find matching callable")
             || item.contains("Cannot compare")
@@ -1505,7 +1513,7 @@ FromConstexpr<string::TrimMode, string::constexpr TrimMode>(
     let file = compile_one("memory://constexpr-ns.tq", source.trim());
     let messages = messages(&file);
     assert!(
-        !messages.iter().any(|item| item.contains("Expected '>'")),
+        !messages.iter().any(|item| is_syntax_error(item)),
         "{messages:?}"
     );
 }
@@ -1804,7 +1812,7 @@ macro Beta<T : type extends String>(y: T): T {
 }
 
 #[test]
-fn expected_semicolon_after_otherwise_unreachable_does_not_cover_next_const() {
+fn missing_semicolon_after_otherwise_unreachable_reports_the_next_const_like_v8() {
     let source = r#"
 macro Main(receiver: JSAny, callback: JSAny): void {
   const jsreceiver = Cast<JSReceiver>(receiver) otherwise unreachable
@@ -1815,28 +1823,20 @@ macro Main(receiver: JSAny, callback: JSAny): void {
     let text = source.trim();
     let second_const = text.find("const callbackfn").unwrap() as u32;
     let second_const_end = second_const + "const".len() as u32;
-    let unreachable = text.find("unreachable").unwrap() as u32;
-    let unreachable_end = unreachable + "unreachable".len() as u32;
-    let expected_semi: Vec<_> = file
+    let syntax_errors: Vec<_> = file
         .diagnostics
         .iter()
-        .filter(|item| item.message == "Expected ';'")
+        .filter(|item| is_syntax_error(&item.message))
         .collect();
-    assert!(
-        !expected_semi.is_empty(),
-        "expected a missing-semicolon diagnostic, got {:?}",
-        file.diagnostics
+    assert_eq!(syntax_errors.len(), 1, "{:?}", file.diagnostics);
+    assert_eq!(
+        syntax_errors[0].message,
+        "Parser Error: unexpected token \"const\""
     );
-    for item in expected_semi {
-        assert!(
-            item.start >= second_const_end || item.end <= second_const,
-            "Expected ';' overlapped the second const: {item:?}"
-        );
-        assert!(
-            item.start >= unreachable_end && item.start < second_const,
-            "Expected ';' was not after unreachable: {item:?}"
-        );
-    }
+    assert_eq!(
+        (syntax_errors[0].start, syntax_errors[0].end),
+        (second_const, second_const_end)
+    );
 }
 
 #[test]
@@ -1866,14 +1866,15 @@ fn compile_reuses_parse_of_unchanged_uri_and_text() {
 #[test]
 fn compile_with_check_sees_sibling_the_hole_and_string_fields() {
     let objects = r#"
-extern class HeapObject {
+type StrongTagged;
+extern class HeapObject extends StrongTagged {
   const map: Map;
 }
 extern class PrimitiveHeapObject extends HeapObject {}
 extern class Name extends PrimitiveHeapObject {}
 extern class String extends Name {}
 extern operator '.length_intptr' macro LoadStringLengthAsWord(String): intptr;
-extern class Map {
+extern class Map extends HeapObject {
   elements_kind: ElementsKind;
 }
 extern enum ElementsKind { PACKED_SMI_ELEMENTS }

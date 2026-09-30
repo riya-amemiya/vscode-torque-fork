@@ -36,6 +36,16 @@ impl Diagnostic {
             file: span.file,
         }
     }
+
+    pub fn warning(span: Span, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            start: span.start,
+            end: span.end,
+            severity: "warning",
+            file: span.file,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

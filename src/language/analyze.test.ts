@@ -2,6 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { analyzeDocument, dropResolvedElsewhere, includeAt, resolveDefinition } from "./analyze";
 import { completionsFor } from "./complete";
 
+function isSyntaxError(message: string): boolean {
+  return (
+    message.startsWith("Parser Error:") ||
+    message.startsWith("Lexer Error:") ||
+    message.startsWith("Ambiguous grammer rules")
+  );
+}
+
 const sample = `
 namespace math {
   type Number = Smi | HeapNumber;
@@ -41,13 +49,24 @@ describe("analyzeDocument", () => {
   });
 
   test("detects unmatched braces as syntax errors", () => {
-    const analysis = analyzeDocument("macro Broken(): void { if (true) {");
-    expect(analysis.diagnostics.some((item) => item.message.includes("Unclosed"))).toBe(true);
+    const source = "macro Broken(): void { if (true) {";
+    const analysis = analyzeDocument(source);
+    expect(analysis.diagnostics).toContainEqual({
+      message: "Parser Error: unexpected end of input",
+      start: source.length,
+      end: source.length,
+      severity: "error",
+    });
   });
 
   test("detects a missing macro name", () => {
     const analysis = analyzeDocument("macro (): void {}");
-    expect(analysis.diagnostics.some((item) => item.message === "Expected macro name")).toBe(true);
+    expect(analysis.diagnostics).toContainEqual({
+      message: 'Parser Error: unexpected token "("',
+      start: 6,
+      end: 7,
+      severity: "error",
+    });
   });
 
   test("does not treat runtime:: calls as runtime declarations", () => {
@@ -58,7 +77,7 @@ transitioning macro ArrayIsArray_Inline(
 }
 `.trim();
     const analysis = analyzeDocument(source);
-    expect(analysis.diagnostics.map((item) => item.message)).not.toContain("Expected runtime name");
+    expect(analysis.diagnostics.filter((item) => isSyntaxError(item.message))).toEqual([]);
     expect(analysis.symbols.map((symbol) => `${symbol.kind}:${symbol.name}`)).toContain(
       "macro:ArrayIsArray_Inline",
     );
@@ -94,14 +113,16 @@ transitioning javascript builtin ArrayPrototypeFlat(
 `.trim();
     const analysis = analyzeDocument(source);
     const garbage = [
-      "Expected ';'",
-      "Expected ')'",
       "Cannot resolve 'this'",
       "Cannot resolve 'goto'",
       "Cannot resolve 'arguments'",
       "Cannot resolve 'context'",
     ];
-    expect(analysis.diagnostics.filter((item) => garbage.includes(item.message))).toEqual([]);
+    expect(
+      analysis.diagnostics.filter(
+        (item) => isSyntaxError(item.message) || garbage.includes(item.message),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -298,7 +319,7 @@ macro FastFilterSpeciesCreate(receiver: JSReceiver): JSReceiver {
     ).toBe(false);
   });
 
-  test("places Expected ';' after otherwise unreachable, not on the next const", () => {
+  test("reports a missing ';' after otherwise unreachable on the next const like V8", () => {
     const source = `
 macro Main(receiver: JSAny, callback: JSAny): void {
   const jsreceiver = Cast<JSReceiver>(receiver) otherwise unreachable
@@ -307,17 +328,25 @@ macro Main(receiver: JSAny, callback: JSAny): void {
 `.trim();
     const analysis = analyzeDocument(source);
     const secondConst = source.indexOf("const callbackfn");
-    const secondConstEnd = secondConst + "const".length;
-    const unreachable = source.indexOf("unreachable");
-    const unreachableEnd = unreachable + "unreachable".length;
-    const expectedSemi = analysis.diagnostics.filter((item) => item.message === "Expected ';'");
-    expect(expectedSemi.length).toBeGreaterThan(0);
-    expect(
-      expectedSemi.every((item) => item.start >= secondConstEnd || item.end <= secondConst),
-    ).toBe(true);
-    expect(
-      expectedSemi.every((item) => item.start >= unreachableEnd && item.start < secondConst),
-    ).toBe(true);
+    expect(analysis.diagnostics.filter((item) => isSyntaxError(item.message))).toEqual([
+      {
+        message: 'Parser Error: unexpected token "const"',
+        start: secondConst,
+        end: secondConst + "const".length,
+        severity: "error",
+      },
+    ]);
+  });
+
+  test("reports V8 naming convention lints as warnings", () => {
+    const source = "macro lowerName(): void {}";
+    const analysis = analyzeDocument(source);
+    expect(analysis.diagnostics).toContainEqual({
+      message: 'Macro "lowerName" does not follow "UpperCamelCase" naming convention.',
+      start: source.indexOf("lowerName"),
+      end: source.indexOf("lowerName") + "lowerName".length,
+      severity: "warning",
+    });
   });
 
   test("falls back to workspace symbols when the compiler map misses", () => {
