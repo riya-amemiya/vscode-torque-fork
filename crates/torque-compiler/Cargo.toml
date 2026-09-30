@@ -14,3 +14,6 @@ serde_json.workspace = true
 torque-check.workspace = true
 torque-diagnostic.workspace = true
 torque-parser.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true

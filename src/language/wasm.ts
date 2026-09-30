@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { compileJson, initSync } from "torque-compiler";
+import torqueCompilerWasm from "torque-compiler/torque_compiler_bg.wasm";
 
 export type CompilerDiagnostic = {
   message: string;
@@ -54,60 +56,10 @@ export type CompilerFile = {
   builtinTypes?: string[];
 };
 
-type WasmExports = {
-  memory: WebAssembly.Memory;
-  torque_alloc: (size: number) => number;
-  torque_free: (ptr: number, size: number) => void;
-  torque_compile: (ptr: number, len: number) => number;
-  torque_result_len: () => number;
-};
+initSync({ module: readFileSync(path.resolve(__dirname, torqueCompilerWasm)) });
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-let wasmExports: WasmExports | undefined;
 let lastParseCountValue = 0;
 let lastInputFileCountValue = 0;
-
-function wasmCandidates(): string[] {
-  const here = typeof __dirname === "string" ? __dirname : process.cwd();
-  return [
-    path.join(here, "torque_compiler.wasm"),
-    path.join(here, "..", "torque_compiler.wasm"),
-    path.join(here, "..", "..", "dist", "torque_compiler.wasm"),
-    path.join(
-      here,
-      "..",
-      "..",
-      "target",
-      "wasm32-unknown-unknown",
-      "release",
-      "torque_compiler.wasm",
-    ),
-    path.join(process.cwd(), "dist", "torque_compiler.wasm"),
-    path.join(process.cwd(), "target", "wasm32-unknown-unknown", "release", "torque_compiler.wasm"),
-  ];
-}
-
-export function loadTorqueCompiler(wasmBytes: Uint8Array): void {
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {});
-  wasmExports = instance.exports as unknown as WasmExports;
-}
-
-export function resetTorqueCompiler(): void {
-  wasmExports = undefined;
-}
-
-export function ensureTorqueCompiler(): void {
-  if (wasmExports !== undefined) {
-    return;
-  }
-  const wasmPath = wasmCandidates().find((candidate) => existsSync(candidate));
-  if (wasmPath === undefined) {
-    throw new Error("torque_compiler.wasm not found; run `bun run build:wasm`");
-  }
-  loadTorqueCompiler(readFileSync(wasmPath));
-}
 
 export function lastCompileParseCount(): number {
   return lastParseCountValue;
@@ -122,31 +74,16 @@ export function compileSources(
   checkUris?: readonly string[],
   incremental = false,
 ): CompilerFile[] {
-  ensureTorqueCompiler();
-  const wasm = wasmExports;
-  if (wasm === undefined) {
-    throw new Error("Torque WASM compiler is not loaded");
-  }
-  try {
-    lastInputFileCountValue = files.length;
-    const payload = encoder.encode(
+  lastInputFileCountValue = files.length;
+  const parsed = JSON.parse(
+    compileJson(
       JSON.stringify({
         files,
         ...(checkUris === undefined ? {} : { checkUris }),
         ...(incremental ? { incremental: true } : {}),
       }),
-    );
-    const ptr = wasm.torque_alloc(payload.length);
-    new Uint8Array(wasm.memory.buffer).set(payload, ptr);
-    const outPtr = wasm.torque_compile(ptr, payload.length);
-    const outLen = wasm.torque_result_len();
-    const output = decoder.decode(new Uint8Array(wasm.memory.buffer, outPtr, outLen).slice());
-    wasm.torque_free(ptr, payload.length);
-    const parsed = JSON.parse(output) as { files: CompilerFile[]; parseCount?: number };
-    lastParseCountValue = parsed.parseCount ?? parsed.files.length;
-    return parsed.files;
-  } catch (error) {
-    wasmExports = undefined;
-    throw error;
-  }
+    ),
+  ) as { files: CompilerFile[]; parseCount?: number };
+  lastParseCountValue = parsed.parseCount ?? parsed.files.length;
+  return parsed.files;
 }

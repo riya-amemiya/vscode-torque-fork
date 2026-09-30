@@ -12,46 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cell::RefCell;
+use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::compile::compile_json;
-
-thread_local! {
-    static RESULT: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn torque_alloc(size: u32) -> *mut u8 {
-    let mut buffer = vec![0u8; size as usize];
-    let ptr = buffer.as_mut_ptr();
-    std::mem::forget(buffer);
-    ptr
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn torque_free(ptr: *mut u8, size: u32) {
-    if ptr.is_null() {
-        return;
-    }
-    unsafe {
-        drop(Vec::from_raw_parts(ptr, size as usize, size as usize));
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn torque_compile(ptr: *const u8, len: u32) -> *const u8 {
-    let input = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-    let text = std::str::from_utf8(input).unwrap_or("");
-    let output = compile_json(text);
-    RESULT.with(|result| {
-        let mut result = result.borrow_mut();
-        result.clear();
-        result.extend_from_slice(output.as_bytes());
-        result.as_ptr()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn torque_result_len() -> u32 {
-    RESULT.with(|result| result.borrow().len() as u32)
+#[wasm_bindgen(js_name = compileJson)]
+pub fn compile_json(input: &str) -> String {
+    crate::compile::compile_json(input)
 }

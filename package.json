@@ -16,10 +16,13 @@
     "url": "https://github.com/riya-amemiya/vscode-torque-fork.git"
   },
   "publisher": "riya-amemiya",
+  "workspaces": [
+    "crates/torque-compiler/pkg"
+  ],
   "main": "./dist/extension.js",
   "scripts": {
-    "build:wasm": "cargo build --release --target wasm32-unknown-unknown -p torque-compiler && bun scripts/copy-wasm.ts",
-    "bundle": "rolldown -c && bun scripts/copy-formatter-wasm.ts",
+    "build:wasm": "wasm-pack build crates/torque-compiler --release --target web",
+    "bundle": "rolldown -c",
     "compile": "bun run build:wasm && bun run bundle",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -29,10 +32,11 @@
     "test:compiler": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "bun run build:wasm && rolldown -c --minify",
-    "watch": "bun scripts/copy-formatter-wasm.ts && rolldown -c --watch"
+    "watch": "rolldown -c --watch"
   },
   "dependencies": {
     "@wasm-fmt/clang-format": "23.1.1",
+    "torque-compiler": "workspace:*",
     "vscode-languageclient": "10.1.1"
   },
   "devDependencies": {
