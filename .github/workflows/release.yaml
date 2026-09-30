@@ -22,6 +22,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Install wasm-pack
+        run: curl -fsSL https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack
+      - run: bun run build:wasm
       - run: bun install --frozen-lockfile
       - run: bun run package
       - run: gh release create "${{ github.ref_name }}" ./*.vsix --generate-notes

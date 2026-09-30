@@ -12,3 +12,13 @@ declare namespace WebAssembly {
     readonly exports: Record<string, unknown>;
   }
 }
+
+declare module "@wasm-fmt/clang-format/wasm" {
+  const wasmPath: string;
+  export default wasmPath;
+}
+
+declare module "torque-compiler/torque_compiler_bg.wasm" {
+  const wasmPath: string;
+  export default wasmPath;
+}

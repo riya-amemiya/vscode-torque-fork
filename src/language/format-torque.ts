@@ -6,7 +6,12 @@
 // license in the V8 repository. Modifications are licensed under the
 // Apache License, Version 2.0.
 
-import { format as formatWithClang } from "@wasm-fmt/clang-format/node";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
+import clangFormatWasm from "@wasm-fmt/clang-format/wasm";
+import { format as formatWithClang, initSync } from "@wasm-fmt/clang-format/web";
+
+initSync(readFileSync(path.resolve(__dirname, clangFormatWasm)));
 
 const PERCENT = "α";
 const DEREF = "☆";
