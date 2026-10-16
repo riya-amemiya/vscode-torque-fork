@@ -37,16 +37,16 @@
   "dependencies": {
     "@wasm-fmt/clang-format": "23.1.1",
     "torque-compiler": "workspace:*",
-    "vscode-languageclient": "10.1.1"
+    "vscode-languageclient": "10.1.2"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
-    "@types/node": "26.6.1",
+    "@types/node": "26.6.4",
     "@types/vscode": "1.125.0",
     "@vscode/vsce": "4.0.0",
-    "oxfmt": "0.68.0",
-    "oxlint": "1.83.0",
-    "rolldown": "1.2.9",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "rolldown": "1.2.13",
     "typescript": "7.0.2"
   },
   "contributes": {
