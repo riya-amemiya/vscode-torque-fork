@@ -10,6 +10,9 @@ multi-ecosystem-groups:
   github-actions-dependencies:
     schedule:
       interval: "weekly"
+  cargo-dependencies:
+    schedule:
+      interval: "weekly"
 updates:
   - package-ecosystem: "bun"
     directory: "/"
@@ -19,3 +22,7 @@ updates:
     directory: "/"
     patterns: ["*"]
     multi-ecosystem-group: "github-actions-dependencies"
+  - package-ecosystem: "cargo"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "cargo-dependencies"
