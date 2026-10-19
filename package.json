@@ -1,7 +1,7 @@
 {
   "name": "vscode-torque-fork",
   "displayName": "V8 Torque Language Support Fork",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Syntax highlighting, formatting, go-to-definition, completions, and a WASM Torque compiler for V8 Torque",
   "categories": [
     "Programming Languages"
@@ -40,13 +40,13 @@
     "vscode-languageclient": "10.1.2"
   },
   "devDependencies": {
-    "@types/bun": "1.4.2",
-    "@types/node": "26.6.4",
+    "@types/bun": "1.4.3",
+    "@types/node": "26.6.5",
     "@types/vscode": "1.125.0",
     "@vscode/vsce": "4.0.0",
-    "oxfmt": "0.72.0",
-    "oxlint": "1.87.0",
-    "rolldown": "1.2.13",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "rolldown": "1.2.14",
     "typescript": "7.0.2"
   },
   "contributes": {
