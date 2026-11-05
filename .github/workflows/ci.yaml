@@ -27,8 +27,8 @@ jobs:
       - run: cargo test --workspace
       - name: Install wasm-pack
         run: cargo install wasm-pack
-      - run: bun run build:wasm
       - run: bun install --frozen-lockfile
+      - run: bun run build:wasm
       - parallel:
           - name: Lint
             run: bun run lint

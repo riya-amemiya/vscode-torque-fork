@@ -16,9 +16,6 @@
     "url": "https://github.com/riya-amemiya/vscode-torque-fork.git"
   },
   "publisher": "riya-amemiya",
-  "workspaces": [
-    "crates/torque-compiler/pkg"
-  ],
   "main": "./dist/extension.js",
   "scripts": {
     "build:wasm": "wasm-pack build crates/torque-compiler --release --target web",
@@ -36,7 +33,6 @@
   },
   "dependencies": {
     "@wasm-fmt/clang-format": "23.1.1",
-    "torque-compiler": "workspace:*",
     "vscode-languageclient": "11.0.0"
   },
   "devDependencies": {
