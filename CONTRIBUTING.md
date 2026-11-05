@@ -22,14 +22,14 @@ public issue for security reports.
 ## Development
 
 Install [Bun](https://bun.sh/) and
-[wasm-pack](https://github.com/wasm-bindgen/wasm-pack). `bun install` links
-the compiler package that `bun run build:wasm` writes to
-`crates/torque-compiler/pkg`, so build it first, then run the same checks CI
-runs on every pull request:
+[wasm-pack](https://github.com/wasm-bindgen/wasm-pack). `bun run build:wasm`
+writes the compiler package to `crates/torque-compiler/pkg`, which the sources
+import as `torque-compiler` through the `paths` entry in `tsconfig.json`. Run
+the same checks CI runs on every pull request:
 
 ```
-bun run build:wasm
 bun install
+bun run build:wasm
 bun run lint
 bun run format:check
 bun run typecheck

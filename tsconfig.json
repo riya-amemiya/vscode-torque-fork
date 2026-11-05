@@ -9,6 +9,10 @@
     "types": ["bun"],
 
     "moduleResolution": "bundler",
+    "paths": {
+      "torque-compiler": ["./crates/torque-compiler/pkg/torque_compiler.js"],
+      "torque-compiler/*": ["./crates/torque-compiler/pkg/*"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
