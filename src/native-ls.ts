@@ -97,6 +97,7 @@ export async function tryStartNativeLanguageServer(
   _context: ExtensionContext,
   output: LogOutputChannel,
   statusBarItem: StatusBarItem,
+  onRunningChange: (running: boolean) => void,
 ): Promise<void> {
   const torqueConfiguration = workspace.getConfiguration("torque.ls");
   const workspacePath = workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
@@ -135,6 +136,7 @@ export async function tryStartNativeLanguageServer(
     switch (event.newState) {
       case State.Running:
         statusBarItem.text = "torque-ls: Running";
+        onRunningChange(true);
         break;
       case State.Starting:
         statusBarItem.text = "torque-ls: Starting";
@@ -142,6 +144,7 @@ export async function tryStartNativeLanguageServer(
       case State.StartFailed:
       case State.Stopped:
         statusBarItem.text = "torque: wasm";
+        onRunningChange(false);
         break;
       default: {
         const exhaustive: never = event.newState;

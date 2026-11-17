@@ -18,7 +18,7 @@
 // The file dist/extension.js is generated from src/extension.ts and
 // should not be modified manually.
 
-import { window, type ExtensionContext } from "vscode";
+import { window, workspace, type ExtensionContext } from "vscode";
 import { TorqueWorkspace } from "./language/workspace";
 import {
   createTorqueStatusBar,
@@ -32,8 +32,16 @@ export async function activate(context: ExtensionContext) {
   const statusBarItem = createTorqueStatusBar();
   const store = new TorqueWorkspace();
   context.subscriptions.push(output, statusBarItem);
-  registerTorqueLanguage(context, store);
-  await tryStartNativeLanguageServer(context, output, statusBarItem);
+  const setNativeRunning = registerTorqueLanguage(context, store);
+  if (workspace.isTrusted) {
+    await tryStartNativeLanguageServer(context, output, statusBarItem, setNativeRunning);
+    return;
+  }
+  context.subscriptions.push(
+    workspace.onDidGrantWorkspaceTrust(() => {
+      void tryStartNativeLanguageServer(context, output, statusBarItem, setNativeRunning);
+    }),
+  );
 }
 
 export function deactivate(): Thenable<void> | undefined {
