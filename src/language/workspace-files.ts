@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import * as path from "node:path";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "out", "build", "dist"]);
@@ -45,46 +46,32 @@ export function findTorqueRoot(startPath: string): string | undefined {
   return fallback;
 }
 
-export function listTorqueFiles(root: string): string[] {
-  const files: string[] = [];
+export async function listTorqueFiles(root: string): Promise<string[]> {
   const roots = [
     path.join(root, "src"),
     path.join(root, "test", "torque"),
     path.join(root, "third_party", "v8"),
   ];
-  for (const dir of roots) {
-    if (existsSync(dir)) {
-      walkTorqueFiles(dir, files);
-    }
-  }
-  files.sort();
-  return files;
+  const found = await Promise.all(roots.map((dir) => walkTorqueFiles(dir)));
+  return found.flat().toSorted();
 }
 
-function walkTorqueFiles(dir: string, out: string[]): void {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return;
-  }
-  for (const name of entries) {
-    if (SKIP_DIRS.has(name)) {
-      continue;
-    }
-    const full = path.join(dir, name);
-    let stat;
-    try {
-      stat = statSync(full);
-    } catch {
-      continue;
-    }
-    if (stat.isDirectory()) {
-      walkTorqueFiles(full, out);
-      continue;
-    }
-    if (name.endsWith(".tq")) {
-      out.push(full);
-    }
-  }
+async function walkTorqueFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir).catch((): string[] => []);
+  const found = await Promise.all(
+    entries
+      .filter((name) => !SKIP_DIRS.has(name))
+      .map(async (name): Promise<string[]> => {
+        const full = path.join(dir, name);
+        const info = await stat(full).catch(() => undefined);
+        if (info === undefined) {
+          return [];
+        }
+        if (info.isDirectory()) {
+          return walkTorqueFiles(full);
+        }
+        return name.endsWith(".tq") ? [full] : [];
+      }),
+  );
+  return found.flat();
 }

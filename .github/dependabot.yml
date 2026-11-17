@@ -18,6 +18,8 @@ updates:
     directory: "/"
     patterns: ["*"]
     multi-ecosystem-group: "bun-dependencies"
+    ignore:
+      - dependency-name: "@types/vscode"
   - package-ecosystem: "github-actions"
     directory: "/"
     patterns: ["*"]
