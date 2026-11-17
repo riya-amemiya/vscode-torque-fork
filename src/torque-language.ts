@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import {
   CompletionItem,
   CompletionItemKind,
@@ -165,11 +165,18 @@ function locationForSymbol(store: TorqueWorkspace, symbol: TorqueSymbol, fallbac
   return new Location(fallback, new Range(new Position(0, 0), new Position(0, 0)));
 }
 
-export function registerTorqueLanguage(context: ExtensionContext, store: TorqueWorkspace): void {
+export function registerTorqueLanguage(
+  context: ExtensionContext,
+  store: TorqueWorkspace,
+): (nativeRunning: boolean) => void {
   const diagnostics = languages.createDiagnosticCollection("torque-compiler");
   const semanticChange = new EventEmitter<void>();
+  const native = { running: false };
 
   const publish = (uri: Uri, analysis: DocumentAnalysis): void => {
+    if (native.running) {
+      return;
+    }
     diagnostics.set(
       uri,
       analysis.diagnostics.map((item) => {
@@ -191,33 +198,48 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
   };
 
   const rebuildAndPublish = (): void => {
+    if (!store.isDirty()) {
+      return;
+    }
     store.rebuild();
     publishAll();
     semanticChange.fire();
   };
 
-  const disk = { loaded: false };
+  const pendingRebuild = { timer: undefined as ReturnType<typeof setTimeout> | undefined };
 
-  const loadDiskFiles = (seedPath: string): void => {
-    if (disk.loaded) {
-      return;
+  const scheduleRebuild = (): void => {
+    if (pendingRebuild.timer !== undefined) {
+      clearTimeout(pendingRebuild.timer);
+    }
+    pendingRebuild.timer = setTimeout(() => {
+      pendingRebuild.timer = undefined;
+      rebuildAndPublish();
+    }, 50);
+  };
+
+  const disk: { loading: Promise<void> | undefined } = { loading: undefined };
+
+  const readDiskFiles = async (root: string): Promise<void> => {
+    for (const fsPath of await listTorqueFiles(root)) {
+      const uri = Uri.file(fsPath).toString();
+      const text = await readFile(fsPath, "utf8").catch(() => undefined);
+      if (text !== undefined && !store.hasSource(uri)) {
+        store.load(uri, text);
+      }
+    }
+  };
+
+  const loadDiskFiles = (seedPath: string): Promise<void> => {
+    if (disk.loading !== undefined) {
+      return disk.loading;
     }
     const root = findTorqueRoot(seedPath);
     if (root === undefined) {
-      return;
+      return Promise.resolve();
     }
-    disk.loaded = true;
-    for (const fsPath of listTorqueFiles(root)) {
-      const uri = Uri.file(fsPath).toString();
-      if (store.hasSource(uri)) {
-        continue;
-      }
-      try {
-        store.load(uri, readFileSync(fsPath, "utf8"));
-      } catch {
-        continue;
-      }
-    }
+    disk.loading = readDiskFiles(root);
+    return disk.loading;
   };
 
   const refreshDocument = (document: TextDocument): void => {
@@ -226,7 +248,9 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     }
     const uri = document.uri.toString();
     const text = document.getText();
-    if (store.get(uri)?.text === text) {
+    const current = store.get(uri);
+    if (current?.text === text) {
+      publish(document.uri, current);
       return;
     }
     store.load(uri, text);
@@ -234,36 +258,49 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
     semanticChange.fire();
   };
 
-  const pendingRefresh = { timer: undefined as ReturnType<typeof setTimeout> | undefined };
+  const pendingRefresh = new Map<string, ReturnType<typeof setTimeout>>();
 
   const scheduleRefresh = (document: TextDocument): void => {
-    if (pendingRefresh.timer !== undefined) {
-      clearTimeout(pendingRefresh.timer);
-    }
-    pendingRefresh.timer = setTimeout(() => {
-      pendingRefresh.timer = undefined;
-      refreshDocument(document);
-    }, 50);
+    const uri = document.uri.toString();
+    clearTimeout(pendingRefresh.get(uri));
+    pendingRefresh.set(
+      uri,
+      setTimeout(() => {
+        pendingRefresh.delete(uri);
+        refreshDocument(document);
+      }, 50),
+    );
   };
 
-  const ingestOpen = (document: TextDocument): void => {
+  const ingestOpen = async (document: TextDocument): Promise<void> => {
     if (document.languageId !== "torque") {
       return;
     }
-    const uri = document.uri.toString();
-    store.load(uri, document.getText());
+    store.load(document.uri.toString(), document.getText());
     if (document.uri.scheme === "file") {
-      loadDiskFiles(document.uri.fsPath);
-    }
-    if (store.get(uri) !== undefined) {
-      refreshDocument(document);
-      return;
+      await loadDiskFiles(document.uri.fsPath);
     }
     rebuildAndPublish();
+    refreshDocument(document);
   };
 
+  const loadChangedFile = async (file: Uri): Promise<void> => {
+    const text = await readFile(file.fsPath, "utf8").catch(() => undefined);
+    const uri = file.toString();
+    if (
+      text === undefined ||
+      vsWorkspace.textDocuments.some((document) => document.uri.toString() === uri)
+    ) {
+      return;
+    }
+    store.load(uri, text);
+    scheduleRebuild();
+  };
+
+  const watcher = vsWorkspace.createFileSystemWatcher("**/*.tq");
+
   for (const document of vsWorkspace.textDocuments) {
-    ingestOpen(document);
+    void ingestOpen(document);
   }
 
   void vsWorkspace
@@ -282,6 +319,14 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
   context.subscriptions.push(
     diagnostics,
     semanticChange,
+    watcher,
+    watcher.onDidCreate(loadChangedFile),
+    watcher.onDidChange(loadChangedFile),
+    watcher.onDidDelete((file) => {
+      store.delete(file.toString());
+      diagnostics.delete(file);
+      scheduleRebuild();
+    }),
     vsWorkspace.onDidOpenTextDocument(ingestOpen),
     vsWorkspace.onDidChangeTextDocument((event) => {
       if (event.contentChanges.length === 0) {
@@ -290,7 +335,11 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
       scheduleRefresh(event.document);
     }),
     vsWorkspace.onDidSaveTextDocument((document) => {
-      refreshDocument(document);
+      if (document.languageId !== "torque") {
+        return;
+      }
+      store.load(document.uri.toString(), document.getText());
+      rebuildAndPublish();
     }),
     vsWorkspace.onDidCloseTextDocument((document) => {
       diagnostics.delete(document.uri);
@@ -405,4 +454,13 @@ export function registerTorqueLanguage(context: ExtensionContext, store: TorqueW
       SEMANTIC_LEGEND,
     ),
   );
+
+  return (nativeRunning: boolean): void => {
+    native.running = nativeRunning;
+    if (nativeRunning) {
+      diagnostics.clear();
+      return;
+    }
+    publishAll();
+  };
 }

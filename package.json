@@ -28,7 +28,7 @@
     "test": "bun test src",
     "test:compiler": "cargo test --workspace",
     "typecheck": "tsc --noEmit",
-    "vscode:prepublish": "bun run build:wasm && rolldown -c --minify",
+    "vscode:prepublish": "rolldown -c --minify",
     "watch": "rolldown -c --watch"
   },
   "dependencies": {
@@ -171,5 +171,14 @@
   "icon": "v8-logo.png",
   "engines": {
     "vscode": "^1.125.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "The native torque-language-server starts only after the workspace is trusted.",
+      "restrictedConfigurations": [
+        "torque.ls.executable"
+      ]
+    }
   }
 }

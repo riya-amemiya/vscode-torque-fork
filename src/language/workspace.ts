@@ -69,16 +69,24 @@ export class TorqueWorkspace {
     if (current !== undefined && current.text === text) {
       return current;
     }
-    const compiled = analyzeDocuments([{ uri, text }], [uri], true);
-    const analysis = compiled.get(uri);
-    if (analysis === undefined) {
+    const analysis = analyzeDocuments([{ uri, text }], [uri], true).get(uri);
+    if (analysis !== undefined) {
+      this.documents.set(uri, analysis);
+      return analysis;
+    }
+    this.dirty = true;
+    this.rebuild();
+    const rebuilt = this.documents.get(uri);
+    if (rebuilt === undefined) {
       throw new Error(`Torque compiler did not return analysis for ${uri}`);
     }
-    this.documents.set(uri, analysis);
-    return analysis;
+    return rebuilt;
   }
 
   rebuild(): void {
+    if (!this.dirty) {
+      return;
+    }
     const files = [...this.sources.entries()].map(([uri, text]) => ({ uri, text }));
     try {
       const compiled = analyzeDocuments(files);
@@ -115,7 +123,8 @@ export class TorqueWorkspace {
 
   delete(uri: string): void {
     this.sources.delete(uri);
-    this.rebuild();
+    this.documents.delete(uri);
+    this.dirty = true;
   }
 
   get(uri: string): DocumentAnalysis | undefined {
